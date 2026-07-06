@@ -1,0 +1,21 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>正在打开物资页面</title>
+  </head>
+  <body>
+    <script>
+      const url = new URL(window.location.href);
+      const parts = url.pathname.split("/").filter(Boolean);
+      const itemIndex = parts.indexOf("item");
+      const baseParts = itemIndex >= 0 ? parts.slice(0, itemIndex) : parts.slice(0, 1);
+      const basePath = baseParts.length ? `/${baseParts.join("/")}/` : "/";
+      const code = url.searchParams.get("code") || url.searchParams.get("item") || "";
+      const target = new URL(basePath, window.location.origin);
+      if (code) target.searchParams.set("code", code);
+      window.location.replace(target.toString());
+    </script>
+  </body>
+</html>

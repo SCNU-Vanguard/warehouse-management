@@ -1,0 +1,47 @@
+﻿name = "warehouse-api"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Non-secret values can live here.
+[vars]
+# Use FEISHU_WIKI_TOKEN when your table is opened from a Feishu wiki URL.
+# The worker will resolve the real Bitable app_token automatically.
+FEISHU_WIKI_TOKEN = "JPtgwwj0mia1KvkOOoUckEGOngd"
+
+# Optional fallback: if you later get a raw /base/appxxxx URL, you can use this instead.
+# FEISHU_APP_TOKEN = "replace-with-bitable-app-token"
+
+FEISHU_ITEMS_TABLE_ID = "tblMsuzoJ3m3eXfw"
+FEISHU_RECORDS_TABLE_ID = "replace-with-movement-records-table-id"
+ALLOWED_ORIGIN = "https://your-org.github.io"
+
+# Your current inventory table fields.
+FIELD_CODE = "货物编号"
+FIELD_NAME = "货品"
+FIELD_STOCK = "现有库存数量"
+FIELD_IN_QTY = "入库数量"
+FIELD_OUT_QTY = "出库数量"
+
+# Default write mode updates 入库数量 / 出库数量, so 现有库存数量 can stay as a formula field.
+# Set STOCK_WRITE_MODE = "stock" only if 现有库存数量 is a writable number field.
+STOCK_WRITE_MODE = "movement_totals"
+
+# Optional item fields.
+FIELD_UNIT = "单位"
+FIELD_CATEGORY = "分类"
+FIELD_QR = "二维码链接"
+FIELD_NOTE = "备注"
+
+# Movement record table fields.
+FIELD_RECORD_CODE = "货物编号"
+FIELD_RECORD_NAME = "货品"
+FIELD_RECORD_TYPE = "类型"
+FIELD_RECORD_QTY = "数量"
+FIELD_REASON = "出库原因"
+FIELD_DETAIL = "具体信息"
+FIELD_OPERATOR = "操作人"
+FIELD_TIME = "操作时间"
+
+# Add these as Wrangler secrets, not plain vars:
+# wrangler secret put FEISHU_APP_ID
+# wrangler secret put FEISHU_APP_SECRET
