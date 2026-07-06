@@ -122,7 +122,7 @@ async function getRecords(env) {
 
   const fields = fieldNames(env);
   const rows = await listBitableRecords(env, source.token, env.FEISHU_RECORDS_TABLE_ID);
-  return rows.map((row) => normalizeMovement(row, fields)).sort((a, b) => new Date(b.time) - new Date(a.time));
+  return rows.map((row) => normalizeMovement(row, fields)).sort((a, b) => Date.parse(b.time || "") - Date.parse(a.time || ""));
 }
 
 async function findItemByCode(env, code) {
@@ -422,3 +422,4 @@ function corsHeaders(env, request) {
     "Vary": "Origin"
   };
 }
+
