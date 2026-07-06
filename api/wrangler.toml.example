@@ -7,6 +7,7 @@ compatibility_date = "2024-11-01"
 # Use FEISHU_WIKI_TOKEN when your table is opened from a Feishu wiki URL.
 # The worker will resolve the real Bitable app_token automatically.
 FEISHU_WIKI_TOKEN = "JPtgwwj0mia1KvkOOoUckEGOngd"
+FEISHU_SHEET_ID = "81kyme"
 
 # Optional fallback: if you later get a raw /base/appxxxx URL, you can use this instead.
 # FEISHU_APP_TOKEN = "replace-with-bitable-app-token"
@@ -46,4 +47,3 @@ FIELD_TIME = "操作时间"
 # Add these as Wrangler secrets, not plain vars:
 # wrangler secret put FEISHU_APP_ID
 # wrangler secret put FEISHU_APP_SECRET
-

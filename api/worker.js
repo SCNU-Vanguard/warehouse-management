@@ -1,6 +1,6 @@
 ﻿let cachedToken = null;
 let cachedTokenExpiresAt = 0;
-let cachedBitableAppToken = null;
+let cachedDataSource = null;
 
 const FEISHU_HOST = "https://open.feishu.cn";
 
@@ -78,10 +78,10 @@ async function createMovement(env, type, payload) {
 
   const nextStock = type === "inbound" ? currentStock + quantity : currentStock - quantity;
   const fields = fieldNames(env);
-  await updateRecord(env, env.FEISHU_ITEMS_TABLE_ID, item.recordId, stockUpdateFields(env, type, item, quantity, nextStock, fields));
+  await updateInventoryRow(env, item, stockUpdateFields(env, type, item, quantity, nextStock, fields));
 
   if (env.FEISHU_RECORDS_TABLE_ID) {
-    await createRecord(env, env.FEISHU_RECORDS_TABLE_ID, {
+    await createMovementRecord(env, {
       [fields.recordCode]: item.code,
       [fields.recordName]: item.name,
       [fields.recordType]: type === "inbound" ? "入库" : "出库",
@@ -101,16 +101,27 @@ async function createMovement(env, type, payload) {
 
 async function getItems(env) {
   requireEnv(env);
+  const source = await getDataSource(env);
   const fields = fieldNames(env);
-  const rows = await listRecords(env, env.FEISHU_ITEMS_TABLE_ID);
+
+  if (source.type === "sheet") {
+    const rows = await listSheetRows(env, source);
+    return rows.map((row) => normalizeItem(row, fields)).filter((item) => item.code || item.name);
+  }
+
+  if (!env.FEISHU_ITEMS_TABLE_ID) throw new Error("Missing environment variable: FEISHU_ITEMS_TABLE_ID");
+  const rows = await listBitableRecords(env, source.token, env.FEISHU_ITEMS_TABLE_ID);
   return rows.map((row) => normalizeItem(row, fields));
 }
 
 async function getRecords(env) {
   requireEnv(env);
   if (!env.FEISHU_RECORDS_TABLE_ID) return [];
+  const source = await getDataSource(env);
+  if (source.type !== "bitable") return [];
+
   const fields = fieldNames(env);
-  const rows = await listRecords(env, env.FEISHU_RECORDS_TABLE_ID);
+  const rows = await listBitableRecords(env, source.token, env.FEISHU_RECORDS_TABLE_ID);
   return rows.map((row) => normalizeMovement(row, fields)).sort((a, b) => new Date(b.time) - new Date(a.time));
 }
 
@@ -131,7 +142,8 @@ function normalizeItem(row, fields) {
     unit: textValue(data[fields.unit]),
     category: textValue(data[fields.category]),
     qr: textValue(data[fields.qr]),
-    note: textValue(data[fields.note])
+    note: textValue(data[fields.note]),
+    meta: row.meta || null
   };
 }
 
@@ -163,9 +175,24 @@ function stockUpdateFields(env, type, item, quantity, nextStock, fields) {
   return { [fields.outQuantity]: item.outboundTotal + quantity };
 }
 
-async function listRecords(env, tableId) {
+async function updateInventoryRow(env, item, fields) {
+  const source = await getDataSource(env);
+
+  if (source.type === "sheet") {
+    return updateSheetRow(env, source, item, fields);
+  }
+
+  return updateBitableRecord(env, source.token, env.FEISHU_ITEMS_TABLE_ID, item.recordId, fields);
+}
+
+async function createMovementRecord(env, fields) {
+  const source = await getDataSource(env);
+  if (source.type !== "bitable") return null;
+  return createBitableRecord(env, source.token, env.FEISHU_RECORDS_TABLE_ID, fields);
+}
+
+async function listBitableRecords(env, appToken, tableId) {
   const records = [];
-  const appToken = await getBitableAppToken(env);
   let pageToken = "";
   do {
     const params = new URLSearchParams({ page_size: "500" });
@@ -177,41 +204,85 @@ async function listRecords(env, tableId) {
   return records;
 }
 
-async function updateRecord(env, tableId, recordId, fields) {
-  const appToken = await getBitableAppToken(env);
+async function updateBitableRecord(env, appToken, tableId, recordId, fields) {
   return feishu(env, `/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}`, {
     method: "PUT",
     body: JSON.stringify({ fields })
   });
 }
 
-async function createRecord(env, tableId, fields) {
-  const appToken = await getBitableAppToken(env);
+async function createBitableRecord(env, appToken, tableId, fields) {
   return feishu(env, `/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records`, {
     method: "POST",
     body: JSON.stringify({ fields })
   });
 }
 
-async function getBitableAppToken(env) {
+async function listSheetRows(env, source) {
+  if (!source.sheetId) {
+    throw new Error("Missing environment variable: FEISHU_SHEET_ID. Use the value after sheet= in the Feishu URL, for example 81kyme.");
+  }
+
+  const range = `${source.sheetId}!A1:Z1000`;
+  const params = new URLSearchParams({ ranges: range, valueRenderOption: "ToString" });
+  const result = await feishu(env, `/open-apis/sheets/v2/spreadsheets/${source.token}/values_batch_get?${params}`);
+  const valueRange = result.data?.valueRanges?.[0] || result.data?.value_ranges?.[0] || result.data?.valueRange || {};
+  const values = valueRange.values || [];
+  if (values.length < 2) return [];
+
+  const headers = values[0].map((value) => textValue(value).trim());
+  return values.slice(1).map((valuesRow, index) => {
+    const fields = {};
+    headers.forEach((header, columnIndex) => {
+      if (header) fields[header] = valuesRow[columnIndex] ?? "";
+    });
+    return {
+      record_id: String(index + 2),
+      fields,
+      meta: { rowNumber: index + 2, headers }
+    };
+  });
+}
+
+async function updateSheetRow(env, source, item, fields) {
+  const headers = item.meta?.headers || [];
+  const rowNumber = item.meta?.rowNumber;
+  if (!rowNumber) throw new Error("sheet row number not found");
+
+  for (const [fieldName, value] of Object.entries(fields)) {
+    const columnIndex = headers.indexOf(fieldName);
+    if (columnIndex < 0) throw new Error(`sheet field not found: ${fieldName}`);
+    const columnName = columnLetters(columnIndex + 1);
+    await feishu(env, `/open-apis/sheets/v2/spreadsheets/${source.token}/values`, {
+      method: "PUT",
+      body: JSON.stringify({
+        valueRange: {
+          range: `${source.sheetId}!${columnName}${rowNumber}:${columnName}${rowNumber}`,
+          values: [[value]]
+        }
+      })
+    });
+  }
+}
+
+async function getDataSource(env) {
   requireEnv(env);
-  if (env.FEISHU_APP_TOKEN) return env.FEISHU_APP_TOKEN;
-  if (cachedBitableAppToken) return cachedBitableAppToken;
+  if (env.FEISHU_APP_TOKEN) {
+    return { type: "bitable", token: env.FEISHU_APP_TOKEN };
+  }
+  if (cachedDataSource) return cachedDataSource;
 
   const result = await feishu(env, `/open-apis/wiki/v2/spaces/get_node?token=${encodeURIComponent(env.FEISHU_WIKI_TOKEN)}`);
   const node = result.data?.node || result.data || {};
   const objType = node.obj_type || node.objType;
   const objToken = node.obj_token || node.objToken;
 
-  if (!objToken) {
-    throw new Error("failed to resolve Feishu wiki token to app_token");
-  }
-  if (objType && objType !== "bitable") {
-    throw new Error(`wiki node is ${objType}, not bitable`);
-  }
+  if (!objToken) throw new Error("failed to resolve Feishu wiki token");
+  if (objType === "bitable") cachedDataSource = { type: "bitable", token: objToken };
+  else if (objType === "sheet") cachedDataSource = { type: "sheet", token: objToken, sheetId: env.FEISHU_SHEET_ID };
+  else throw new Error(`unsupported wiki node type: ${objType || "unknown"}`);
 
-  cachedBitableAppToken = objToken;
-  return cachedBitableAppToken;
+  return cachedDataSource;
 }
 
 async function feishu(env, path, options = {}) {
@@ -275,11 +346,7 @@ function fieldNames(env) {
 }
 
 function requireEnv(env) {
-  const required = [
-    "FEISHU_APP_ID",
-    "FEISHU_APP_SECRET",
-    "FEISHU_ITEMS_TABLE_ID"
-  ];
+  const required = ["FEISHU_APP_ID", "FEISHU_APP_SECRET"];
   const missing = required.filter((key) => !env[key]);
   if (missing.length > 0) {
     throw new Error(`Missing environment variables: ${missing.join(", ")}`);
@@ -323,6 +390,16 @@ function timeValue(value) {
   return text;
 }
 
+function columnLetters(index) {
+  let letters = "";
+  while (index > 0) {
+    const mod = (index - 1) % 26;
+    letters = String.fromCharCode(65 + mod) + letters;
+    index = Math.floor((index - mod) / 26);
+  }
+  return letters;
+}
+
 function json(body, env, request, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -345,4 +422,3 @@ function corsHeaders(env, request) {
     "Vary": "Origin"
   };
 }
-

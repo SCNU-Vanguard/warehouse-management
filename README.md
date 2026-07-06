@@ -72,7 +72,8 @@ Use `FEISHU_WIKI_TOKEN` when your Bitable is opened from a Feishu wiki URL. The 
 ```text
 FEISHU_APP_ID
 FEISHU_APP_SECRET
-FEISHU_WIKI_TOKEN=JPtgwwj0mia1KvkOOoUckEGOngd`r`nFEISHU_ITEMS_TABLE_ID=tblMsuzoJ3m3eXfw
+FEISHU_WIKI_TOKEN=JPtgwwj0mia1KvkOOoUckEGOngd
+FEISHU_SHEET_ID=81kyme`r`nFEISHU_ITEMS_TABLE_ID=tblMsuzoJ3m3eXfw
 ```
 
 If you later get a raw `/base/appxxxx` link, you can set `FEISHU_APP_TOKEN` instead of `FEISHU_WIKI_TOKEN`.
@@ -120,4 +121,3 @@ bitable record read/write permissions
 
 1. Copy `api/wrangler.toml.example` to `api/wrangler.toml`.
 2. Add `FEISHU_APP_ID` and `FEISHU_APP_SECRET` as Worker secrets.`r`n3. Deploy the Worker and set the frontend API Base URL to the Worker URL.`r`n4. Optionally add `FEISHU_RECORDS_TABLE_ID` later for movement history and charts.
-
