@@ -270,7 +270,11 @@ async function getDataSource(env) {
   if (env.FEISHU_APP_TOKEN) {
     return { type: "bitable", token: env.FEISHU_APP_TOKEN };
   }
-  if (cachedDataSource) return cachedDataSource;
+  if (cachedDataSource) {
+    return cachedDataSource.type === "sheet"
+      ? { ...cachedDataSource, sheetId: env.FEISHU_SHEET_ID }
+      : cachedDataSource;
+  }
 
   const result = await feishu(env, `/open-apis/wiki/v2/spaces/get_node?token=${encodeURIComponent(env.FEISHU_WIKI_TOKEN)}`);
   const node = result.data?.node || result.data || {};
@@ -279,10 +283,12 @@ async function getDataSource(env) {
 
   if (!objToken) throw new Error("failed to resolve Feishu wiki token");
   if (objType === "bitable") cachedDataSource = { type: "bitable", token: objToken };
-  else if (objType === "sheet") cachedDataSource = { type: "sheet", token: objToken, sheetId: env.FEISHU_SHEET_ID };
+  else if (objType === "sheet") cachedDataSource = { type: "sheet", token: objToken };
   else throw new Error(`unsupported wiki node type: ${objType || "unknown"}`);
 
-  return cachedDataSource;
+  return cachedDataSource.type === "sheet"
+    ? { ...cachedDataSource, sheetId: env.FEISHU_SHEET_ID }
+    : cachedDataSource;
 }
 
 async function feishu(env, path, options = {}) {
@@ -422,4 +428,8 @@ function corsHeaders(env, request) {
     "Vary": "Origin"
   };
 }
+
+
+
+
 
