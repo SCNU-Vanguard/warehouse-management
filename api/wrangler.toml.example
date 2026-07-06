@@ -12,7 +12,8 @@ FEISHU_WIKI_TOKEN = "JPtgwwj0mia1KvkOOoUckEGOngd"
 # FEISHU_APP_TOKEN = "replace-with-bitable-app-token"
 
 FEISHU_ITEMS_TABLE_ID = "tblMsuzoJ3m3eXfw"
-FEISHU_RECORDS_TABLE_ID = "replace-with-movement-records-table-id"
+# Optional: set this after you create a movement record table. Without it, /api/records returns an empty list.
+# FEISHU_RECORDS_TABLE_ID = "replace-with-movement-records-table-id"
 ALLOWED_ORIGIN = "https://your-org.github.io"
 
 # Your current inventory table fields.
@@ -45,3 +46,4 @@ FIELD_TIME = "操作时间"
 # Add these as Wrangler secrets, not plain vars:
 # wrangler secret put FEISHU_APP_ID
 # wrangler secret put FEISHU_APP_SECRET
+

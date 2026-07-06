@@ -80,16 +80,18 @@ async function createMovement(env, type, payload) {
   const fields = fieldNames(env);
   await updateRecord(env, env.FEISHU_ITEMS_TABLE_ID, item.recordId, stockUpdateFields(env, type, item, quantity, nextStock, fields));
 
-  await createRecord(env, env.FEISHU_RECORDS_TABLE_ID, {
-    [fields.recordCode]: item.code,
-    [fields.recordName]: item.name,
-    [fields.recordType]: type === "inbound" ? "入库" : "出库",
-    [fields.recordQuantity]: quantity,
-    [fields.reason]: reason,
-    [fields.detail]: detail,
-    [fields.operator]: operator,
-    [fields.time]: Date.now()
-  });
+  if (env.FEISHU_RECORDS_TABLE_ID) {
+    await createRecord(env, env.FEISHU_RECORDS_TABLE_ID, {
+      [fields.recordCode]: item.code,
+      [fields.recordName]: item.name,
+      [fields.recordType]: type === "inbound" ? "入库" : "出库",
+      [fields.recordQuantity]: quantity,
+      [fields.reason]: reason,
+      [fields.detail]: detail,
+      [fields.operator]: operator,
+      [fields.time]: Date.now()
+    });
+  }
 
   return {
     item: { ...item, stock: nextStock },
@@ -106,6 +108,7 @@ async function getItems(env) {
 
 async function getRecords(env) {
   requireEnv(env);
+  if (!env.FEISHU_RECORDS_TABLE_ID) return [];
   const fields = fieldNames(env);
   const rows = await listRecords(env, env.FEISHU_RECORDS_TABLE_ID);
   return rows.map((row) => normalizeMovement(row, fields)).sort((a, b) => new Date(b.time) - new Date(a.time));
@@ -275,8 +278,7 @@ function requireEnv(env) {
   const required = [
     "FEISHU_APP_ID",
     "FEISHU_APP_SECRET",
-    "FEISHU_ITEMS_TABLE_ID",
-    "FEISHU_RECORDS_TABLE_ID"
+    "FEISHU_ITEMS_TABLE_ID"
   ];
   const missing = required.filter((key) => !env[key]);
   if (missing.length > 0) {
@@ -343,3 +345,4 @@ function corsHeaders(env, request) {
     "Vary": "Origin"
   };
 }
+

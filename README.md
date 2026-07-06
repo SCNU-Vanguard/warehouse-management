@@ -72,9 +72,7 @@ Use `FEISHU_WIKI_TOKEN` when your Bitable is opened from a Feishu wiki URL. The 
 ```text
 FEISHU_APP_ID
 FEISHU_APP_SECRET
-FEISHU_WIKI_TOKEN=JPtgwwj0mia1KvkOOoUckEGOngd
-FEISHU_ITEMS_TABLE_ID=tblMsuzoJ3m3eXfw
-FEISHU_RECORDS_TABLE_ID
+FEISHU_WIKI_TOKEN=JPtgwwj0mia1KvkOOoUckEGOngd`r`nFEISHU_ITEMS_TABLE_ID=tblMsuzoJ3m3eXfw
 ```
 
 If you later get a raw `/base/appxxxx` link, you can set `FEISHU_APP_TOKEN` instead of `FEISHU_WIKI_TOKEN`.
@@ -92,7 +90,7 @@ STOCK_WRITE_MODE=movement_totals
 
 `movement_totals` writes inbound changes to `入库数量` and outbound changes to `出库数量`, so `现有库存数量` can remain a formula field. Use `STOCK_WRITE_MODE=stock` only if `现有库存数量` is a writable number column.
 
-Movement record table field defaults:
+Optional movement record table field defaults:
 
 ```text
 FIELD_RECORD_CODE=货物编号
@@ -121,6 +119,5 @@ bitable record read/write permissions
 ## Next Steps
 
 1. Copy `api/wrangler.toml.example` to `api/wrangler.toml`.
-2. Fill `FEISHU_RECORDS_TABLE_ID` with the movement record table ID.
-3. Add `FEISHU_APP_ID` and `FEISHU_APP_SECRET` as Worker secrets.
-4. Deploy the Worker and set the frontend API Base URL to the Worker URL.
+2. Add `FEISHU_APP_ID` and `FEISHU_APP_SECRET` as Worker secrets.`r`n3. Deploy the Worker and set the frontend API Base URL to the Worker URL.`r`n4. Optionally add `FEISHU_RECORDS_TABLE_ID` later for movement history and charts.
+
