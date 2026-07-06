@@ -28,7 +28,7 @@ api/
 
 ## Frontend
 
-GitHub Pages is configured to serve the `docs/` folder from the `main` branch.
+GitHub Pages is deployed by `.github/workflows/pages.yml`, which publishes the `docs/` folder from the `main` branch.
 
 Site URL:
 
@@ -139,3 +139,4 @@ bitable permissions only if a Bitable source is used
 2. Deploy `api/worker.js` to Cloudflare Workers.
 3. Set the frontend API Base URL to the Worker URL.
 4. Optionally add `FEISHU_RECORDS_TABLE_ID` later for movement history and charts.
+
