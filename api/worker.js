@@ -15,7 +15,7 @@ export default {
       const path = url.pathname.replace(/\/+$/, "") || "/";
 
       if (request.method === "GET" && path === "/api/health") {
-        return json({ ok: true, service: "warehouse-api" }, env, request);
+        return json({ ok: true, service: "warehouse-api", config: publicConfig(env) }, env, request);
       }
 
       if (request.method === "GET" && path === "/api/items") {
@@ -406,6 +406,17 @@ function columnLetters(index) {
   return letters;
 }
 
+function publicConfig(env) {
+  return {
+    hasWikiToken: Boolean(env.FEISHU_WIKI_TOKEN),
+    hasSheetId: Boolean(env.FEISHU_SHEET_ID),
+    sheetIdLength: env.FEISHU_SHEET_ID ? String(env.FEISHU_SHEET_ID).length : 0,
+    hasItemsTableId: Boolean(env.FEISHU_ITEMS_TABLE_ID),
+    hasAppToken: Boolean(env.FEISHU_APP_TOKEN),
+    hasAppId: Boolean(env.FEISHU_APP_ID),
+    hasAppSecret: Boolean(env.FEISHU_APP_SECRET)
+  };
+}
 function json(body, env, request, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -428,6 +439,7 @@ function corsHeaders(env, request) {
     "Vary": "Origin"
   };
 }
+
 
 
 
