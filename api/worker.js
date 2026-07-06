@@ -114,8 +114,9 @@ async function getItems(env) {
     return rows.map((row) => normalizeItem(row, fields)).filter((item) => item.code || item.name);
   }
 
-  if (!env.FEISHU_ITEMS_TABLE_ID) throw new Error("Missing environment variable: FEISHU_ITEMS_TABLE_ID");
-  const rows = await listBitableRecords(env, source.token, env.FEISHU_ITEMS_TABLE_ID);
+  const tableId = env.FEISHU_ITEMS_TABLE_ID || source.tableId;
+  if (!tableId) throw new Error("Missing environment variable: FEISHU_ITEMS_TABLE_ID");
+  const rows = await listBitableRecords(env, source.token, tableId);
   return rows.map((row) => normalizeItem(row, fields));
 }
 
@@ -187,7 +188,7 @@ async function updateInventoryRow(env, item, fields) {
     return updateSheetRow(env, source, item, fields);
   }
 
-  return updateBitableRecord(env, source.token, env.FEISHU_ITEMS_TABLE_ID, item.recordId, fields);
+  return updateBitableRecord(env, source.token, env.FEISHU_ITEMS_TABLE_ID || source.tableId, item.recordId, fields);
 }
 
 async function createMovementRecord(env, fields) {
@@ -301,7 +302,7 @@ async function getDataSource(env) {
 
   if (!objToken) throw new Error("failed to resolve Feishu wiki token");
   if (objType === "bitable") cachedDataSource = { type: "bitable", token: objToken };
-  else if (objType === "sheet") cachedDataSource = { type: "sheet", token: objToken };
+  else if (objType === "sheet") cachedDataSource = await resolveSheetBackedSource(env, objToken);
   else throw new Error(`unsupported wiki node type: ${objType || "unknown"}`);
 
   return cachedDataSource.type === "sheet"
@@ -309,6 +310,27 @@ async function getDataSource(env) {
     : cachedDataSource;
 }
 
+async function resolveSheetBackedSource(env, spreadsheetToken) {
+  const result = await feishu(env, `/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/metainfo`);
+  const sheets = result.data?.sheets || [];
+  const bitableSheet = sheets.find((sheet) => sheet.blockInfo?.blockType === "BITABLE_BLOCK" && sheet.blockInfo?.blockToken);
+
+  if (!bitableSheet) {
+    return { type: "sheet", token: spreadsheetToken };
+  }
+
+  const blockToken = String(bitableSheet.blockInfo.blockToken);
+  const tableMarkerIndex = blockToken.lastIndexOf("_tbl");
+  if (tableMarkerIndex < 0) {
+    throw new Error(`unsupported bitable block token: ${blockToken}`);
+  }
+
+  return {
+    type: "bitable",
+    token: blockToken.slice(0, tableMarkerIndex),
+    tableId: blockToken.slice(tableMarkerIndex + 1)
+  };
+}
 async function feishu(env, path, options = {}) {
   const token = await getTenantToken(env);
   const response = await fetch(`${FEISHU_HOST}${path}`, {
@@ -457,6 +479,7 @@ function corsHeaders(env, request) {
     "Vary": "Origin"
   };
 }
+
 
 
 
