@@ -35,6 +35,11 @@ export default {
         return json({ ok: true, records }, env, request);
       }
 
+      if (request.method === "GET" && path === "/api/debug/sheets") {
+        const sheets = await getSheetDebugInfo(env);
+        return json({ ok: true, ...sheets }, env, request);
+      }
+
       if (request.method === "POST" && path === "/api/inbound") {
         const payload = await readJson(request);
         const result = await createMovement(env, "inbound", payload);
@@ -218,6 +223,19 @@ async function createBitableRecord(env, appToken, tableId, fields) {
   });
 }
 
+async function getSheetDebugInfo(env) {
+  const source = await getDataSource(env);
+  if (source.type !== "sheet") {
+    return { type: source.type, sheets: [] };
+  }
+
+  const result = await feishu(env, `/open-apis/sheets/v2/spreadsheets/${source.token}/metainfo`);
+  return {
+    type: "sheet",
+    configuredSheetId: env.FEISHU_SHEET_ID || "",
+    data: result.data || {}
+  };
+}
 async function listSheetRows(env, source) {
   if (!source.sheetId) {
     throw new Error("Missing environment variable: FEISHU_SHEET_ID. Use the value after sheet= in the Feishu URL, for example 81kyme.");
@@ -439,6 +457,7 @@ function corsHeaders(env, request) {
     "Vary": "Origin"
   };
 }
+
 
 
 
