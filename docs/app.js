@@ -12,12 +12,13 @@ const DEMO_RECORDS = [
 ];
 
 const CLOUDFLARE_API_BASE = "https://warehouse-api.hoanglinh4586359.workers.dev";
+const CLOUDFLARE_FRONTEND_HOST = "scnu-vanguard.github.io";
 
 function defaultApiBase() {
   const host = window.location.hostname;
-  const isLocal = host === "localhost" || host === "127.0.0.1" || window.location.protocol === "file:";
-  const isGitHubPages = host.endsWith(".github.io");
-  return isLocal || isGitHubPages ? CLOUDFLARE_API_BASE : window.location.origin;
+  if (host === CLOUDFLARE_FRONTEND_HOST) return CLOUDFLARE_API_BASE;
+  if (host.endsWith(".github.io") || host === "localhost" || host === "127.0.0.1" || window.location.protocol === "file:") return "";
+  return window.location.origin;
 }
 
 const state = {
@@ -61,8 +62,6 @@ const els = {
   detailSnCount: $("detailSnCount"),
   qrButton: $("qrButton"),
   qrDialog: $("qrDialog"),
-  includeItemQr: $("includeItemQr"),
-  includeSnQr: $("includeSnQr"),
   printQrButton: $("printQrButton"),
   qrLabelSheet: $("qrLabelSheet"),
   movementSnField: $("movementSnField"),
@@ -599,13 +598,8 @@ function itemQrUrl(item) {
   return url.toString();
 }
 
-function snQrUrl(item, sn) {
-  const url = new URL(appBaseUrl());
-  if (item.code) url.searchParams.set("code", item.code);
-  else if (item.recordId) url.searchParams.set("rid", item.recordId);
-  url.searchParams.set("sn", sn);
-  url.searchParams.set("type", "outbound");
-  return url.toString();
+function formatLabelNumber(value) {
+  return Number.isFinite(Number(value)) ? String(Number(value)) : "0";
 }
 
 function renderQrLabels() {
@@ -613,34 +607,20 @@ function renderQrLabels() {
   els.qrLabelSheet.replaceChildren();
   if (!item) return;
 
-  const labels = [];
-  if (els.includeItemQr.checked) {
-    labels.push({
-      kind: "物资码",
-      title: item.name,
-      subtitle: item.code || "未设置货物编号",
-      value: itemQrUrl(item)
-    });
-  }
-
-  if (els.includeSnQr.checked) {
-    splitLines(item.sn).forEach((sn) => {
-      labels.push({
-        kind: "SN码",
-        title: item.name,
-        subtitle: sn,
-        value: snQrUrl(item, sn)
-      });
-    });
-  }
-
-  labels.forEach((label) => els.qrLabelSheet.appendChild(createQrLabel(label)));
-  if (labels.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "muted";
-    empty.textContent = "当前物资没有可生成的标签。";
-    els.qrLabelSheet.appendChild(empty);
-  }
+  const snLines = splitLines(item.sn);
+  els.qrLabelSheet.appendChild(createQrLabel({
+    kind: "物资整合码",
+    title: item.name || "未命名物资",
+    lines: [
+      `编号：${item.code || "未设置"}`,
+      `库存：${formatLabelNumber(item.stock)}${item.unit ? ` ${item.unit}` : ""}`,
+      `负责人：${item.owner || "-"}`,
+      `分类：${item.category || "-"}`,
+      `备注：${item.note || "-"}`,
+      `SN：${snLines.length ? snLines.join(" / ") : "-"}`
+    ],
+    value: itemQrUrl(item)
+  }));
 }
 
 function createQrLabel(label) {
@@ -657,9 +637,9 @@ function createQrLabel(label) {
   kind.textContent = label.kind;
   const title = document.createElement("strong");
   title.textContent = label.title;
-  const subtitle = document.createElement("small");
-  subtitle.textContent = label.subtitle;
-  text.append(kind, title, subtitle);
+  const details = document.createElement("small");
+  details.textContent = label.lines.join("\n");
+  text.append(kind, title, details);
 
   node.append(qrBox, text);
   return node;
@@ -719,8 +699,6 @@ function bindEvents() {
   els.refreshButton.addEventListener("click", loadData);
   els.searchInput.addEventListener("input", renderItems);
   els.qrButton.addEventListener("click", openQrDialog);
-  els.includeItemQr.addEventListener("change", renderQrLabels);
-  els.includeSnQr.addEventListener("change", renderQrLabels);
   els.printQrButton.addEventListener("click", printQrLabels);
   els.inboundTab.addEventListener("click", () => setMovementType("inbound"));
   els.outboundTab.addEventListener("click", () => setMovementType("outbound"));

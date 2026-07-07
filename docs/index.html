@@ -165,18 +165,10 @@
     <dialog id="qrDialog" class="qrDialog">
       <form method="dialog" class="settingsForm">
         <div class="sectionHeader compactHeader">
-          <h2>二维码标签</h2>
+          <h2>整合二维码标签</h2>
           <button value="cancel" class="plainButton" type="submit">关闭</button>
         </div>
         <div class="qrActions">
-          <label class="checkboxLine">
-            <input id="includeItemQr" type="checkbox" checked />
-            <span>物资码</span>
-          </label>
-          <label class="checkboxLine">
-            <input id="includeSnQr" type="checkbox" checked />
-            <span>SN码</span>
-          </label>
           <button id="printQrButton" class="primaryButton" type="button">打印标签</button>
         </div>
         <div id="qrLabelSheet" class="qrLabelSheet"></div>
@@ -194,7 +186,7 @@
     </template>
 
     <script src="./vendor/qrcode.js?v=1.4.4"></script>
-    <script src="./app.js?v=20260707-edgeone-1" defer></script>
+    <script src="./app.js?v=20260707-combined-qr-1" defer></script>
   </body>
 </html>
 

@@ -6,13 +6,13 @@ compatibility_date = "2024-11-01"
 [vars]
 # Use FEISHU_WIKI_TOKEN when your table is opened from a Feishu wiki URL.
 # The worker will resolve the real Bitable app_token automatically.
-FEISHU_WIKI_TOKEN = "JPtgwwj0mia1KvkOOoUckEGOngd"
-FEISHU_SHEET_ID = "81kyme"
+FEISHU_WIKI_TOKEN = "replace-with-wiki-token"
+FEISHU_SHEET_ID = "replace-with-sheet-id"
 
 # Optional fallback: if you later get a raw /base/appxxxx URL, you can use this instead.
 # FEISHU_APP_TOKEN = "replace-with-bitable-app-token"
 
-FEISHU_ITEMS_TABLE_ID = "tblMsuzoJ3m3eXfw"
+FEISHU_ITEMS_TABLE_ID = "replace-with-items-table-id"
 # Optional: set this after you create a movement record table. Without it, /api/records returns an empty list.
 # FEISHU_RECORDS_TABLE_ID = "replace-with-movement-records-table-id"
 ALLOWED_ORIGIN = "https://your-org.github.io"

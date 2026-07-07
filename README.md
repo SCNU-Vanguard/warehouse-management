@@ -1,90 +1,215 @@
-﻿# Warehouse Management Prototype
+# 物资管理系统
 
-Minimal warehouse management prototype for GitHub Pages + Cloudflare Workers + EdgeOne Makers + Feishu.
+一个轻量级物资出入库页面，前端部署在 GitHub Pages，后端 API 部署在 Cloudflare Workers，数据存放在飞书多维表格。
 
-## Architecture
+系统本身不保存数据库，也不接入大模型。所有库存、SN 码、出入库记录都从飞书读取和写入。
 
-```text
-GitHub Pages static frontend
--> Cloudflare Worker API
--> Feishu wiki sheet / Bitable data source
+## 功能
 
-EdgeOne Makers static frontend
--> EdgeOne Edge Function API
--> Feishu wiki sheet / Bitable data source
-```
+- 查看物资列表、库存、负责人、备注和 SN 码
+- 按物资编号、名称、分类搜索
+- 入库、出库，并同步更新飞书表格
+- 出库时记录原因、具体信息、操作人
+- 支持扫码打开指定物资
+- 生成单张整合二维码标签
+- 可选记录出入库历史
 
-The API does not use any large language model. It only reads and writes Feishu document data.
-
-## Folders
+## 项目结构
 
 ```text
 docs/
-  index.html    Static frontend served by GitHub Pages
-  styles.css    Mobile-first UI styles
-  app.js        Dashboard, item detail, scan/manual code flow, inbound/outbound forms
-  assets/       Frontend image assets
+  index.html      前端页面
+  app.js          页面逻辑、扫码、出入库、二维码
+  styles.css      页面样式
+  assets/         图片资源
+  vendor/         前端依赖
 
 api/
-  worker.js     Cloudflare Workers API proxy for Feishu
-  wrangler.toml.example
+  worker.js              Cloudflare Worker 后端
+  wrangler.toml.example  Worker 配置模板
+  wrangler.toml.backup   当前本地部署配置备份
 
-edge-functions/
-  api/[[default]].js  EdgeOne API wrapper around api/worker.js
-
-edgeone.json          EdgeOne Makers static site configuration
+edge-functions/          EdgeOne 可选入口
+edgeone.json             EdgeOne 可选配置
 ```
 
-## Frontend
+## 数据表要求
 
-GitHub Pages is deployed by `.github/workflows/pages.yml`, which publishes the `docs/` folder from the `main` branch.
-
-Site URL:
+主表用于存放当前库存。推荐字段如下：
 
 ```text
-https://scnu-vanguard.github.io/warehouse-management/
+货物编号
+货品
+SN码
+入库数量
+出库数量
+现有库存数量
+负责人
+单位
+分类
+备注
+二维码链接
 ```
 
-In the page settings, set API Base URL to your deployed Worker URL:
+`现有库存数量` 可以是公式字段，例如：
 
 ```text
-https://warehouse-api.hoanglinh4586359.workers.dev
+入库数量 - 出库数量
 ```
 
-QR code content should use a URL like:
+如果要记录出入库历史，另建一张表，字段如下：
 
 ```text
-https://scnu-vanguard.github.io/warehouse-management/?code=WZ-0001
+货物编号
+货品
+类型
+数量
+出库原因
+具体信息
+操作人
+操作时间
 ```
 
-The static page reads `code` from the URL and opens that item.
+## 飞书应用权限
 
-## EdgeOne Makers
-
-EdgeOne can be added as a China-friendly entry point while keeping GitHub Pages + Cloudflare online.
-
-Create an EdgeOne Makers project from this GitHub repository with:
+在飞书开放平台创建企业自建应用，并开启需要的文档权限。常用权限包括：
 
 ```text
-Framework: Other / Static
-Root directory: /
-Install command: empty
-Build command: empty
-Output directory: docs
+wiki:node:read
+多维表格读取权限
+多维表格写入权限
 ```
 
-The frontend chooses its API base automatically:
+如果表格在知识库页面里，还需要让应用能访问对应知识库。改完权限后，要创建并发布新版本，否则权限不会生效。
+
+## 部署后端
+
+后端使用 Cloudflare Workers。
+
+1. 复制配置模板：
+
+```bash
+copy api\wrangler.toml.example api\wrangler.toml
+```
+
+2. 修改 `api/wrangler.toml` 里的变量：
 
 ```text
-github.io or localhost -> https://warehouse-api.hoanglinh4586359.workers.dev
-other hosted domains   -> current origin, for example https://example.edgeone.app/api
+FEISHU_WIKI_TOKEN=飞书知识库页面 token
+FEISHU_SHEET_ID=飞书 sheet id
+FEISHU_ITEMS_TABLE_ID=库存主表 table id
+FEISHU_RECORDS_TABLE_ID=出入库记录表 table id，可选
+ALLOWED_ORIGIN=你的 GitHub Pages 地址
 ```
 
-So the GitHub Pages entry continues to use Cloudflare, and the EdgeOne entry uses the same EdgeOne domain for `/api`.
+如果你用的是飞书多维表格原始链接，也可以不用 `FEISHU_WIKI_TOKEN`，改用：
 
-Add the same Feishu environment variables in EdgeOne project settings. For EdgeOne same-origin deployment, `ALLOWED_ORIGIN` can be the EdgeOne project URL or `*`.
+```text
+FEISHU_APP_TOKEN=appxxxx
+```
 
-## API Endpoints
+3. 添加密钥，不要写进代码：
+
+```bash
+wrangler secret put FEISHU_APP_ID
+wrangler secret put FEISHU_APP_SECRET
+```
+
+4. 部署 Worker：
+
+```bash
+cd api
+wrangler deploy
+```
+
+5. 打开健康检查地址：
+
+```text
+https://你的-worker地址/api/health
+```
+
+看到 `ok: true` 就说明后端已启动。
+
+## 部署前端
+
+前端是纯静态页面，部署 `docs/` 目录即可。
+
+GitHub Pages 推荐设置：
+
+```text
+Source: Deploy from a branch
+Branch: main
+Folder: /docs
+```
+
+部署完成后，打开页面右下角的“设置”，把 `API Base URL` 设置为你的 Worker 地址：
+
+```text
+https://你的-worker地址
+```
+
+保存后刷新页面，能看到飞书数据就说明接入成功。
+
+## 环境变量说明
+
+常用配置如下：
+
+```text
+FEISHU_APP_ID              飞书应用 App ID，作为 Worker secret
+FEISHU_APP_SECRET          飞书应用 App Secret，作为 Worker secret
+FEISHU_WIKI_TOKEN          飞书知识库页面 token
+FEISHU_SHEET_ID            飞书 sheet id
+FEISHU_APP_TOKEN           飞书多维表格 app token，可替代 wiki token
+FEISHU_ITEMS_TABLE_ID      库存主表 table id
+FEISHU_RECORDS_TABLE_ID    出入库记录表 table id，可选
+ALLOWED_ORIGIN             允许访问 API 的前端地址
+```
+
+字段名默认值：
+
+```text
+FIELD_CODE=货物编号
+FIELD_NAME=货品
+FIELD_STOCK=现有库存数量
+FIELD_SN=SN码
+FIELD_IN_QTY=入库数量
+FIELD_OUT_QTY=出库数量
+STOCK_WRITE_MODE=movement_totals
+FIELD_UNIT=单位
+FIELD_CATEGORY=分类
+FIELD_OWNER=负责人
+FIELD_QR=二维码链接
+FIELD_NOTE=备注
+```
+
+出入库记录表默认字段：
+
+```text
+FIELD_RECORD_CODE=货物编号
+FIELD_RECORD_NAME=货品
+FIELD_RECORD_TYPE=类型
+FIELD_RECORD_QTY=数量
+FIELD_REASON=出库原因
+FIELD_DETAIL=具体信息
+FIELD_OPERATOR=操作人
+FIELD_TIME=操作时间
+```
+
+如果你的飞书字段名不同，改对应的环境变量即可。
+
+## 使用方法
+
+打开前端页面后：
+
+1. 左侧选择物资，或用搜索框查找。
+2. 点击“二维码”可以打印整合标签。
+3. 扫描标签会打开对应物资。
+4. 入库时填写数量、SN 码和操作人。
+5. 出库时填写数量、SN 码、出库原因、具体信息和操作人。
+
+SN 码一行一个。出库时如果物资有 SN 码，建议先点选对应 SN，再提交。
+
+## 常用接口
 
 ```text
 GET  /api/health
@@ -95,7 +220,7 @@ POST /api/inbound
 POST /api/outbound
 ```
 
-Example outbound body:
+出库请求示例：
 
 ```json
 {
@@ -107,95 +232,15 @@ Example outbound body:
 }
 ```
 
-## Required Worker Environment Variables
+## 可选：EdgeOne
 
-Use `FEISHU_WIKI_TOKEN` when the source is opened from a Feishu wiki URL. The Worker resolves the underlying document token automatically.
+仓库里保留了 EdgeOne 配置，可以作为国内访问入口。但 EdgeOne 默认域名只适合预览，长期使用通常需要绑定自定义域名。
 
-For the current Feishu sheet source:
+如果只使用 GitHub Pages + Cloudflare Workers，可以忽略 `edge-functions/` 和 `edgeone.json`。
 
-```text
-FEISHU_APP_ID
-FEISHU_APP_SECRET
-FEISHU_WIKI_TOKEN=JPtgwwj0mia1KvkOOoUckEGOngd
-FEISHU_SHEET_ID=81kyme
-ALLOWED_ORIGIN=https://scnu-vanguard.github.io
-```
+## 注意事项
 
-Optional for a raw Bitable source:
-
-```text
-FEISHU_APP_TOKEN=appxxxx
-FEISHU_ITEMS_TABLE_ID=tblxxxx
-```
-
-Current inventory field defaults:
-
-```text
-FIELD_CODE=货物编号
-FIELD_NAME=货品
-FIELD_STOCK=现有库存数量
-FIELD_IN_QTY=入库数量
-FIELD_OUT_QTY=出库数量
-STOCK_WRITE_MODE=movement_totals
-```
-
-`movement_totals` writes inbound changes to `入库数量` and outbound changes to `出库数量`, so `现有库存数量` can remain a formula field. Use `STOCK_WRITE_MODE=stock` only if `现有库存数量` is a writable number column.
-
-Optional movement record table fields:
-
-```text
-FEISHU_RECORDS_TABLE_ID=tblxxxx
-FIELD_RECORD_CODE=货物编号
-FIELD_RECORD_NAME=货品
-FIELD_RECORD_TYPE=类型
-FIELD_RECORD_QTY=数量
-FIELD_REASON=出库原因
-FIELD_DETAIL=具体信息
-FIELD_OPERATOR=操作人
-FIELD_TIME=操作时间
-```
-
-Do not put `FEISHU_APP_SECRET` in frontend code.
-
-## Feishu Permissions
-
-Enable the relevant document permissions in Feishu Open Platform, then create and publish a new app version:
-
-```text
-wiki:node:read
-sheet read/write permissions
-bitable permissions only if a Bitable source is used
-```
-
-## Next Steps
-
-1. Add or update Worker variables in Cloudflare.
-2. Deploy `api/worker.js` to Cloudflare Workers.
-3. Set the frontend API Base URL to the Worker URL.
-4. Optionally add `FEISHU_RECORDS_TABLE_ID` later for movement history and charts.
-
-
-## Movement Record Table
-
-Create a second table in the same Feishu Bitable for inbound/outbound history, then set its table id as `FEISHU_RECORDS_TABLE_ID` in Cloudflare Workers.
-
-Required columns:
-
-```text
-货物编号      text
-货品          text
-类型          single select or text, values: 入库 / 出库
-数量          number
-出库原因      text
-具体信息      text
-操作人        text
-操作时间      date/time
-```
-
-After the table is created, copy the `tbl...` id from the table URL or developer panel and add it to the Worker variables:
-
-```text
-FEISHU_RECORDS_TABLE_ID=tblxxxx
-```
-
-Redeploy or update the Worker after changing variables. `/api/records` should then return recent movement records instead of an empty list.
+- 不要把 `FEISHU_APP_SECRET` 写进前端代码。
+- 不要直接提交 `api/wrangler.toml`，提交 `api/wrangler.toml.example` 即可。
+- 别人 fork 本仓库后，需要填写自己的飞书应用、表格 ID 和 Worker 地址。
+- 如果前端显示演示数据，通常是 `API Base URL` 没填或 Worker 无法访问。

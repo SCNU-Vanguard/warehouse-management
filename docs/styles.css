@@ -810,6 +810,7 @@ dialog {
 
 .qrLabelText small {
   overflow-wrap: anywhere;
+  white-space: pre-line;
   color: #555;
   font-size: 10px;
   line-height: 1.35;
