@@ -144,13 +144,13 @@ Branch: main
 Folder: /docs
 ```
 
-部署完成后，打开页面右下角的“设置”，把 `API Base URL` 设置为你的 Worker 地址：
+部署完成后，把 [docs/app.js](./docs/app.js) 顶部的 `CLOUDFLARE_API_BASE` 改成你的 Worker 地址：
 
 ```text
 https://你的-worker地址
 ```
 
-保存后刷新页面，能看到飞书数据就说明接入成功。
+保存并重新部署前端。页面能看到飞书数据，就说明接入成功。
 
 ## 环境变量说明
 
@@ -245,4 +245,4 @@ POST /api/outbound
 - 不要把 `FEISHU_APP_SECRET` 写进前端代码。
 - 不要直接提交 `api/wrangler.toml`，提交 `api/wrangler.toml.example` 即可。
 - 别人 fork 本仓库后，需要填写自己的飞书应用、表格 ID 和 Worker 地址。
-- 如果前端显示演示数据，通常是 `API Base URL` 没填或 Worker 无法访问。
+- 如果前端显示演示数据，通常是 `CLOUDFLARE_API_BASE` 没改或 Worker 无法访问。

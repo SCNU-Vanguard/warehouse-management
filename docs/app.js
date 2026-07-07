@@ -29,7 +29,7 @@ const state = {
   pendingLink: null,
   stream: null,
   scanTimer: null,
-  apiBase: localStorage.getItem("warehouseApiBase") || defaultApiBase()
+  apiBase: defaultApiBase()
 };
 
 const $ = (id) => document.getElementById(id);
@@ -78,11 +78,7 @@ const els = {
   formStatus: $("formStatus"),
   stockChart: $("stockChart"),
   recordList: $("recordList"),
-  dataModeLabel: $("dataModeLabel"),
-  settingsButton: $("settingsButton"),
-  settingsDialog: $("settingsDialog"),
-  apiBaseInput: $("apiBaseInput"),
-  saveSettingsButton: $("saveSettingsButton")
+  dataModeLabel: $("dataModeLabel")
 };
 
 function apiUrl(path) {
@@ -708,22 +704,6 @@ function bindEvents() {
   els.manualCodeButton.addEventListener("click", () => openCode(els.manualCodeInput.value));
   els.manualCodeInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") openCode(els.manualCodeInput.value);
-  });
-  els.settingsButton.addEventListener("click", () => {
-    els.apiBaseInput.value = state.apiBase;
-    els.settingsDialog.showModal();
-  });
-  els.saveSettingsButton.addEventListener("click", () => {
-    const nextApiBase = els.apiBaseInput.value.trim();
-    if (nextApiBase) {
-      state.apiBase = nextApiBase;
-      localStorage.setItem("warehouseApiBase", state.apiBase);
-    } else {
-      localStorage.removeItem("warehouseApiBase");
-      state.apiBase = defaultApiBase();
-    }
-    els.settingsDialog.close();
-    loadData();
   });
   window.addEventListener("resize", renderChart);
 }

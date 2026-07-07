@@ -141,26 +141,11 @@
         <article class="recordsPanel">
           <div class="sectionHeader">
             <h2>最近出入库</h2>
-            <button id="settingsButton" class="plainButton" type="button">设置</button>
           </div>
           <div id="recordList" class="recordList"></div>
         </article>
       </section>
     </main>
-
-    <dialog id="settingsDialog">
-      <form method="dialog" class="settingsForm">
-        <h2>接口设置</h2>
-        <label>
-          <span>API Base URL</span>
-          <input id="apiBaseInput" type="url" placeholder="https://warehouse-api.example.workers.dev" />
-        </label>
-        <div class="dialogActions">
-          <button value="cancel" type="submit">取消</button>
-          <button id="saveSettingsButton" value="default" type="button">保存</button>
-        </div>
-      </form>
-    </dialog>
 
     <dialog id="qrDialog" class="qrDialog">
       <form method="dialog" class="settingsForm">
@@ -186,7 +171,7 @@
     </template>
 
     <script src="./vendor/qrcode.js?v=1.4.4"></script>
-    <script src="./app.js?v=20260707-combined-qr-1" defer></script>
+    <script src="./app.js?v=20260707-remove-api-settings-1" defer></script>
   </body>
 </html>
 
