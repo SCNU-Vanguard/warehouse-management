@@ -366,7 +366,7 @@ textarea:focus {
   display: grid;
   gap: 8px;
   margin-top: 12px;
-  max-height: clamp(360px, 50vh, 520px);
+  max-height: 540px;
   overflow: auto;
 }
 
@@ -420,7 +420,7 @@ textarea:focus {
 }
 
 .detailPane {
-  min-height: 0;
+  min-height: 420px;
   padding: 18px;
 }
 
@@ -876,10 +876,6 @@ dialog {
 
   .scannerControls {
     grid-template-columns: 1fr;
-  }
-
-  .itemList {
-    max-height: 360px;
   }
 }
 
