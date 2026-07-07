@@ -458,9 +458,9 @@ textarea:focus {
 .detailPane .emptyState,
 .detailPane .detail {
   transition:
-    opacity 1100ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 1100ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 1100ms ease;
+    opacity 100ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 100ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 100ms ease;
 }
 
 .detailPane.is-empty .detail,
@@ -481,7 +481,7 @@ textarea:focus {
 }
 
 .detailPane.detail-refresh .detail {
-  animation: detailRefresh 1100ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: detailRefresh 100ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes detailRefresh {
