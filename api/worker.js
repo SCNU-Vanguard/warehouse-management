@@ -40,6 +40,11 @@ export default {
         return json({ ok: true, ...sheets }, env, request);
       }
 
+      if (request.method === "GET" && path === "/api/debug/record-fields") {
+        const debug = await getRecordFieldDebugInfo(env);
+        return json({ ok: true, ...debug }, env, request);
+      }
+
       if (request.method === "POST" && path === "/api/inbound") {
         const payload = await readJson(request);
         const result = await createMovement(env, "inbound", payload);
@@ -89,7 +94,7 @@ async function createMovement(env, type, payload) {
   let recordWarning = "";
   if (env.FEISHU_RECORDS_TABLE_ID) {
     try {
-      await createMovementRecord(env, movementRecordFields(fields, type, item, quantity, reason, detail, operator));
+      await createMovementRecordWithFallback(env, fields, type, item, quantity, reason, detail, operator);
     } catch (error) {
       recordWarning = `库存已更新，但出入库记录写入失败：${error.message || "unknown error"}`;
     }
@@ -102,17 +107,40 @@ async function createMovement(env, type, payload) {
   };
 }
 
-function movementRecordFields(fields, type, item, quantity, reason, detail, operator) {
-  return {
+async function createMovementRecordWithFallback(env, fields, type, item, quantity, reason, detail, operator) {
+  const now = new Date();
+  const variants = [
+    movementRecordFields(fields, type, item, quantity, reason, detail, operator, { quantity, time: now.getTime() }),
+    movementRecordFields(fields, type, item, quantity, reason, detail, operator, { quantity: String(quantity), time: now.getTime() }),
+    movementRecordFields(fields, type, item, quantity, reason, detail, operator, { quantity: String(quantity), time: formatLocalDateTime(now) }),
+    movementRecordFields(fields, type, item, quantity, reason, detail, operator, { quantity: String(quantity), time: null })
+  ];
+
+  let lastError = null;
+  for (const variant of variants) {
+    try {
+      return await createMovementRecord(env, variant);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("record write failed");
+}
+
+function movementRecordFields(fields, type, item, quantity, reason, detail, operator, overrides = {}) {
+  const record = {
     [fields.recordCode]: item.code || "",
     [fields.recordName]: item.name || "",
     [fields.recordType]: type === "inbound" ? "入库" : "出库",
-    [fields.recordQuantity]: String(quantity),
+    [fields.recordQuantity]: overrides.quantity ?? quantity,
     [fields.reason]: reason || "",
     [fields.detail]: detail || "",
-    [fields.operator]: operator || "",
-    [fields.time]: formatLocalDateTime(new Date())
+    [fields.operator]: operator || ""
   };
+  if (overrides.time !== null) {
+    record[fields.time] = overrides.time ?? Date.now();
+  }
+  return record;
 }
 
 async function getItems(env) {
@@ -241,6 +269,11 @@ async function createBitableRecord(env, appToken, tableId, fields) {
   });
 }
 
+async function listBitableFields(env, appToken, tableId) {
+  const result = await feishu(env, `/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/fields?page_size=100`);
+  return result.data?.items || [];
+}
+
 async function getSheetDebugInfo(env) {
   const source = await getDataSource(env);
   if (source.type !== "sheet") {
@@ -252,6 +285,28 @@ async function getSheetDebugInfo(env) {
     type: "sheet",
     configuredSheetId: env.FEISHU_SHEET_ID || "",
     data: result.data || {}
+  };
+}
+
+async function getRecordFieldDebugInfo(env) {
+  requireEnv(env);
+  if (!env.FEISHU_RECORDS_TABLE_ID) {
+    return { hasRecordsTableId: false, fields: [] };
+  }
+  const source = await getDataSource(env);
+  if (source.type !== "bitable") {
+    return { hasRecordsTableId: true, sourceType: source.type, fields: [] };
+  }
+  const fields = await listBitableFields(env, source.token, env.FEISHU_RECORDS_TABLE_ID);
+  return {
+    hasRecordsTableId: true,
+    recordsTableId: env.FEISHU_RECORDS_TABLE_ID,
+    fields: fields.map((field) => ({
+      fieldName: field.field_name || field.fieldName,
+      fieldId: field.field_id || field.fieldId,
+      type: field.type,
+      uiType: field.ui_type || field.uiType
+    }))
   };
 }
 async function listSheetRows(env, source) {
@@ -360,7 +415,13 @@ async function feishu(env, path, options = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.code !== 0) {
-    throw new Error(data.msg || `Feishu API failed: ${response.status}`);
+    const details = [
+      data.code != null ? `code=${data.code}` : "",
+      data.msg ? `msg=${data.msg}` : "",
+      data.error ? `error=${JSON.stringify(data.error)}` : "",
+      data.data?.error ? `data.error=${JSON.stringify(data.data.error)}` : ""
+    ].filter(Boolean).join(" ");
+    throw new Error(details || `Feishu API failed: ${response.status}`);
   }
   return data;
 }
