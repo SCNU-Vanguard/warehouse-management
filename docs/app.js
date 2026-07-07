@@ -268,6 +268,7 @@ function getSelectedItem() {
   if (!state.selectedKey) return null;
   if (state.selectedKey.startsWith("code:")) {
     const code = state.selectedKey.slice("code:".length);
+    if (!code) return null;
     return state.items.find((item) => item.code === code) || null;
   }
   return state.items.find((item) => itemKey(item) === state.selectedKey) || null;
@@ -280,7 +281,8 @@ function itemKey(item) {
 function isSelectedItem(item) {
   if (!state.selectedKey) return false;
   if (state.selectedKey.startsWith("code:")) {
-    return item.code === state.selectedKey.slice("code:".length);
+    const code = state.selectedKey.slice("code:".length);
+    return Boolean(code) && item.code === code;
   }
   return itemKey(item) === state.selectedKey;
 }
@@ -423,7 +425,9 @@ function extractItemCode(raw) {
   if (!value) return "";
   try {
     const url = new URL(value);
-    return url.searchParams.get("code") || url.searchParams.get("item") || value;
+    if (url.searchParams.has("code")) return String(url.searchParams.get("code") || "").trim();
+    if (url.searchParams.has("item")) return String(url.searchParams.get("item") || "").trim();
+    return value;
   } catch {
     return value;
   }
@@ -448,10 +452,18 @@ function formatTime(value) {
 
 function initFromUrl() {
   const params = new URLSearchParams(window.location.search);
-  const code = params.get("code") || params.get("item");
-  const recordId = params.get("rid");
+  const code = String(params.get("code") || params.get("item") || "").trim();
+  const recordId = String(params.get("rid") || "").trim();
   if (recordId) state.selectedKey = recordId;
   else if (code) state.selectedKey = `code:${code}`;
+  else if (params.has("code") || params.has("item") || params.has("rid")) {
+    params.delete("code");
+    params.delete("item");
+    params.delete("rid");
+    const url = new URL(window.location.href);
+    url.search = params.toString();
+    history.replaceState(null, "", url);
+  }
 }
 
 function bindEvents() {
