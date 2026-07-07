@@ -140,3 +140,28 @@ bitable permissions only if a Bitable source is used
 3. Set the frontend API Base URL to the Worker URL.
 4. Optionally add `FEISHU_RECORDS_TABLE_ID` later for movement history and charts.
 
+
+## Movement Record Table
+
+Create a second table in the same Feishu Bitable for inbound/outbound history, then set its table id as `FEISHU_RECORDS_TABLE_ID` in Cloudflare Workers.
+
+Required columns:
+
+```text
+货物编号      text
+货品          text
+类型          single select or text, values: 入库 / 出库
+数量          number
+出库原因      text
+具体信息      text
+操作人        text
+操作时间      date/time
+```
+
+After the table is created, copy the `tbl...` id from the table URL or developer panel and add it to the Worker variables:
+
+```text
+FEISHU_RECORDS_TABLE_ID=tblxxxx
+```
+
+Redeploy or update the Worker after changing variables. `/api/records` should then return recent movement records instead of an empty list.

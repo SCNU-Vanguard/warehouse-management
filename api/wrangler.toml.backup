@@ -1,0 +1,37 @@
+﻿name = "warehouse-api"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Local deployment backup. Keep FEISHU_APP_ID and FEISHU_APP_SECRET as secrets.
+[vars]
+FEISHU_WIKI_TOKEN = "JPtgwwj0mia1KvkOOoUckEGOngd"
+FEISHU_SHEET_ID = "81kyme"
+FEISHU_ITEMS_TABLE_ID = "tblMsuzoJ3m3eXfw"
+ALLOWED_ORIGIN = "https://scnu-vanguard.github.io"
+
+FIELD_CODE = "货物编号"
+FIELD_NAME = "货品"
+FIELD_STOCK = "现有库存数量"
+FIELD_IN_QTY = "入库数量"
+FIELD_OUT_QTY = "出库数量"
+STOCK_WRITE_MODE = "movement_totals"
+
+FIELD_UNIT = "单位"
+FIELD_CATEGORY = "分类"
+FIELD_QR = "二维码链接"
+FIELD_NOTE = "备注"
+
+# Set this after creating the movement record table in Feishu.
+# FEISHU_RECORDS_TABLE_ID = "tblxxxx"
+FIELD_RECORD_CODE = "货物编号"
+FIELD_RECORD_NAME = "货品"
+FIELD_RECORD_TYPE = "类型"
+FIELD_RECORD_QTY = "数量"
+FIELD_REASON = "出库原因"
+FIELD_DETAIL = "具体信息"
+FIELD_OPERATOR = "操作人"
+FIELD_TIME = "操作时间"
+
+# Secret setup commands:
+# wrangler secret put FEISHU_APP_ID
+# wrangler secret put FEISHU_APP_SECRET

@@ -11,13 +11,15 @@ const DEMO_RECORDS = [
   { code: "WZ-0003", name: "开发板", type: "outbound", quantity: 1, reason: "借用", detail: "测试台架", operator: "王五", time: new Date().toISOString() }
 ];
 
+const DEFAULT_API_BASE = "https://warehouse-api.hoanglinh4586359.workers.dev";
+
 const state = {
   items: [],
   records: [],
   selectedCode: null,
   stream: null,
   scanTimer: null,
-  apiBase: localStorage.getItem("warehouseApiBase") || ""
+  apiBase: localStorage.getItem("warehouseApiBase") || DEFAULT_API_BASE
 };
 
 const $ = (id) => document.getElementById(id);
@@ -447,5 +449,6 @@ initFromUrl();
 bindEvents();
 setMovementType("inbound");
 loadData();
+
 
 
