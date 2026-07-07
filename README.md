@@ -1,5 +1,7 @@
 # 物资管理系统
 
+_https://scnu-vanguard.github.io/warehouse-management/_
+
 一个轻量级物资出入库页面，前端部署在 GitHub Pages，后端 API 部署在 Cloudflare Workers，数据存放在飞书多维表格。
 
 系统本身不保存数据库，也不接入大模型。所有库存、SN 码、出入库记录都从飞书读取和写入。
