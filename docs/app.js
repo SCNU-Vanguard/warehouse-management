@@ -60,6 +60,19 @@ const els = {
   detailNote: $("detailNote"),
   detailSn: $("detailSn"),
   detailSnCount: $("detailSnCount"),
+  editItemButton: $("editItemButton"),
+  itemEditDialog: $("itemEditDialog"),
+  itemEditForm: $("itemEditForm"),
+  editCodeInput: $("editCodeInput"),
+  editNameInput: $("editNameInput"),
+  editSnInput: $("editSnInput"),
+  editUnitInput: $("editUnitInput"),
+  editCategoryInput: $("editCategoryInput"),
+  editOwnerInput: $("editOwnerInput"),
+  editNoteInput: $("editNoteInput"),
+  editItemStatus: $("editItemStatus"),
+  closeEditDialogButton: $("closeEditDialogButton"),
+  cancelEditDialogButton: $("cancelEditDialogButton"),
   qrButton: $("qrButton"),
   qrDialog: $("qrDialog"),
   printQrButton: $("printQrButton"),
@@ -340,6 +353,18 @@ function normalizeSnLine(value) {
   return String(value || "").replace(/\s+/g, "").toLowerCase();
 }
 
+function findDuplicateSn(snLines, existingLines = []) {
+  const seen = new Set(existingLines.map(normalizeSnLine).filter(Boolean));
+  const requestSeen = new Set();
+  for (const sn of snLines) {
+    const key = normalizeSnLine(sn);
+    if (!key) continue;
+    if (seen.has(key) || requestSeen.has(key)) return sn;
+    requestSeen.add(key);
+  }
+  return "";
+}
+
 function setMovementType(type) {
   els.movementType.value = type;
   els.inboundTab.classList.toggle("active", type === "inbound");
@@ -394,6 +419,11 @@ async function submitMovement(event) {
   }
   if (type === "inbound" && snLines.length > 0 && snLines.length !== quantity) {
     setFormStatus(`填写了SN码时，SN数量需要等于入库数量：${quantity} 个`, true);
+    return;
+  }
+  const duplicateSn = type === "inbound" ? findDuplicateSn(snLines, itemSnLines) : findDuplicateSn(snLines);
+  if (duplicateSn) {
+    setFormStatus(type === "inbound" ? `该SN已在库存中，不能重复入库：${duplicateSn}` : `本次出库SN重复：${duplicateSn}`, true);
     return;
   }
 
@@ -689,6 +719,86 @@ function setFormStatus(message, isError = false) {
   els.formStatus.className = `formStatus ${isError ? "error" : "ok"}`;
 }
 
+function setEditStatus(message, isError = false) {
+  els.editItemStatus.textContent = message;
+  els.editItemStatus.className = `formStatus ${isError ? "error" : "ok"}`;
+}
+
+function openEditDialog() {
+  const item = getSelectedItem();
+  if (!item) return;
+  els.editCodeInput.value = item.code || "";
+  els.editNameInput.value = item.name || "";
+  els.editSnInput.value = item.sn || "";
+  els.editUnitInput.value = item.unit || "";
+  els.editCategoryInput.value = item.category || "";
+  els.editOwnerInput.value = item.owner || "";
+  els.editNoteInput.value = item.note || "";
+  setEditStatus("");
+  els.itemEditDialog.showModal();
+}
+
+async function submitItemEdit(event) {
+  event.preventDefault();
+  const item = getSelectedItem();
+  if (!item) return;
+
+  const snLines = splitLines(els.editSnInput.value);
+  const duplicateSn = findDuplicateSn(snLines);
+  if (duplicateSn) {
+    setEditStatus(`SN重复：${duplicateSn}`, true);
+    return;
+  }
+
+  const payload = {
+    code: item.code,
+    recordId: item.recordId,
+    nextCode: els.editCodeInput.value.trim(),
+    name: els.editNameInput.value.trim(),
+    sn: snLines,
+    unit: els.editUnitInput.value.trim(),
+    category: els.editCategoryInput.value.trim(),
+    owner: els.editOwnerInput.value.trim(),
+    note: els.editNoteInput.value.trim()
+  };
+
+  if (!payload.nextCode && !payload.name) {
+    setEditStatus("货物编号和货品至少保留一个", true);
+    return;
+  }
+
+  setEditStatus("正在保存...");
+  try {
+    if (state.apiBase) {
+      await requestJson("/api/items/update", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      await loadData();
+      const updated = payload.recordId
+        ? state.items.find((entry) => entry.recordId === payload.recordId)
+        : state.items.find((entry) => entry.code === payload.nextCode);
+      if (updated) selectItem(updated);
+    } else {
+      Object.assign(item, {
+        code: payload.nextCode,
+        name: payload.name,
+        sn: snLines.join("\n"),
+        unit: payload.unit,
+        category: payload.category,
+        owner: payload.owner,
+        note: payload.note
+      });
+      renderAll();
+      selectItem(item);
+    }
+    els.itemEditDialog.close();
+    setStatus("物资信息已保存");
+  } catch (error) {
+    setEditStatus(error.message || "保存失败", true);
+  }
+}
+
 function formatTime(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -715,6 +825,10 @@ function initFromUrl() {
 function bindEvents() {
   els.refreshButton.addEventListener("click", loadData);
   els.searchInput.addEventListener("input", renderItems);
+  els.editItemButton.addEventListener("click", openEditDialog);
+  els.itemEditForm.addEventListener("submit", submitItemEdit);
+  els.closeEditDialogButton.addEventListener("click", () => els.itemEditDialog.close());
+  els.cancelEditDialogButton.addEventListener("click", () => els.itemEditDialog.close());
   els.qrButton.addEventListener("click", openQrDialog);
   els.printQrButton.addEventListener("click", printQrLabels);
   els.inboundTab.addEventListener("click", () => setMovementType("inbound"));

@@ -30,6 +30,12 @@ export default {
         return json({ ok: true, item }, env, request);
       }
 
+      if (request.method === "POST" && path === "/api/items/update") {
+        const payload = await readJson(request);
+        const result = await updateItemProfile(env, payload);
+        return json({ ok: true, ...result }, env, request);
+      }
+
       if (request.method === "GET" && path === "/api/records") {
         const records = await getRecords(env);
         return json({ ok: true, records }, env, request);
@@ -113,10 +119,87 @@ async function createMovement(env, type, payload) {
   };
 }
 
+async function updateItemProfile(env, payload) {
+  const code = String(payload.code || "").trim();
+  const recordId = String(payload.recordId || "").trim();
+  if (!code && !recordId) throw new Error("code or recordId is required");
+
+  const items = await getItems(env);
+  const item = items.find((entry) => (recordId && entry.recordId === recordId) || (code && entry.code === code));
+  if (!item) throw new Error("item not found");
+
+  const fields = fieldNames(env);
+  const updates = {};
+  const textFields = [
+    ["nextCode", "code", fields.code],
+    ["name", "name", fields.name],
+    ["unit", "unit", fields.unit],
+    ["category", "category", fields.category],
+    ["owner", "owner", fields.owner],
+    ["note", "note", fields.note]
+  ];
+
+  textFields.forEach(([payloadKey, itemKey, fieldName]) => {
+    if (Object.prototype.hasOwnProperty.call(payload, payloadKey)) {
+      const nextValue = String(payload[payloadKey] || "").trim();
+      if (nextValue !== String(item[itemKey] || "")) updates[fieldName] = nextValue;
+    }
+  });
+
+  if (Object.prototype.hasOwnProperty.call(payload, "sn")) {
+    const snLines = parseSnPayload(payload.sn);
+    ensureUniqueSnLines(snLines);
+    ensureSnNotUsedByOtherItems(items, item, snLines);
+    const nextSn = snLines.join("\n");
+    if (nextSn !== String(item.sn || "")) updates[fields.sn] = nextSn;
+  }
+
+  if (Object.keys(updates).length === 0) return { item };
+
+  await updateInventoryRow(env, item, updates);
+  return { item: { ...item, ...profilePatchFromUpdates(fields, updates) } };
+}
+
+function ensureSnNotUsedByOtherItems(items, currentItem, snLines) {
+  const wanted = new Set(snLines.map(normalizeSnLine).filter(Boolean));
+  if (wanted.size === 0) return;
+  for (const item of items) {
+    const sameItem = currentItem.recordId
+      ? item.recordId === currentItem.recordId
+      : item.code === currentItem.code;
+    if (sameItem) continue;
+    const duplicate = splitSnLines(item.sn).find((sn) => wanted.has(normalizeSnLine(sn)));
+    if (duplicate) throw new Error(`SN already used by another item: ${duplicate}`);
+  }
+}
+
+function profilePatchFromUpdates(fields, updates) {
+  const patch = {};
+  const map = [
+    ["code", fields.code],
+    ["name", fields.name],
+    ["sn", fields.sn],
+    ["unit", fields.unit],
+    ["category", fields.category],
+    ["owner", fields.owner],
+    ["note", fields.note]
+  ];
+  map.forEach(([key, fieldName]) => {
+    if (Object.prototype.hasOwnProperty.call(updates, fieldName)) patch[key] = updates[fieldName];
+  });
+  return patch;
+}
+
 function nextInventorySnLines(type, currentSnLines, movementSnLines, quantity) {
+  ensureUniqueSnLines(movementSnLines);
+
   if (type === "inbound") {
     if (movementSnLines.length > 0 && movementSnLines.length !== quantity) {
       throw new Error(`SN count must equal inbound quantity: ${quantity}`);
+    }
+    const duplicate = movementSnLines.find((sn) => currentSnLines.some((line) => sameSnLine(line, sn)));
+    if (duplicate) {
+      throw new Error(`SN already exists in inventory: ${duplicate}`);
     }
     return [...currentSnLines, ...movementSnLines];
   }
@@ -133,6 +216,15 @@ function nextInventorySnLines(type, currentSnLines, movementSnLines, quantity) {
     remaining.splice(index, 1);
   }
   return remaining;
+}
+
+function ensureUniqueSnLines(snLines) {
+  const seen = new Set();
+  for (const sn of snLines) {
+    const key = normalizeSnLine(sn);
+    if (seen.has(key)) throw new Error(`Duplicate SN in request: ${sn}`);
+    seen.add(key);
+  }
 }
 
 function shouldUpdateSn(type, movementSnLines, currentSnLines) {

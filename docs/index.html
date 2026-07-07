@@ -73,6 +73,7 @@
                 <h2 id="detailName"></h2>
               </div>
               <div class="detailHeaderActions">
+                <button id="editItemButton" class="plainButton" type="button">编辑信息</button>
                 <button id="qrButton" class="plainButton" type="button">二维码</button>
                 <div class="stockBadge">
                   <span>当前库存</span>
@@ -160,6 +161,48 @@
       </form>
     </dialog>
 
+    <dialog id="itemEditDialog">
+      <form id="itemEditForm" class="settingsForm">
+        <div class="sectionHeader compactHeader">
+          <h2>编辑物资信息</h2>
+          <button id="closeEditDialogButton" value="cancel" class="plainButton" type="button">关闭</button>
+        </div>
+        <label>
+          <span>货物编号</span>
+          <input id="editCodeInput" type="text" />
+        </label>
+        <label>
+          <span>货品</span>
+          <input id="editNameInput" type="text" />
+        </label>
+        <label>
+          <span>SN码</span>
+          <textarea id="editSnInput" rows="5" placeholder="一行一个SN码"></textarea>
+        </label>
+        <label>
+          <span>单位</span>
+          <input id="editUnitInput" type="text" />
+        </label>
+        <label>
+          <span>分类</span>
+          <input id="editCategoryInput" type="text" />
+        </label>
+        <label>
+          <span>负责人</span>
+          <input id="editOwnerInput" type="text" />
+        </label>
+        <label>
+          <span>备注</span>
+          <textarea id="editNoteInput" rows="3"></textarea>
+        </label>
+        <div class="dialogActions">
+          <button id="cancelEditDialogButton" value="cancel" type="button">取消</button>
+          <button class="primaryButton" type="submit">保存</button>
+        </div>
+        <p id="editItemStatus" class="formStatus" role="status"></p>
+      </form>
+    </dialog>
+
     <template id="itemTemplate">
       <button class="itemRow" type="button">
         <span class="itemMain">
@@ -171,7 +214,7 @@
     </template>
 
     <script src="./vendor/qrcode.js?v=1.4.4"></script>
-    <script src="./app.js?v=20260707-sn-labels-1" defer></script>
+    <script src="./app.js?v=20260707-edit-profile-1" defer></script>
   </body>
 </html>
 
