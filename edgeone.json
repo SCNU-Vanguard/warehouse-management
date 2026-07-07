@@ -1,0 +1,6 @@
+{
+  "name": "warehouse-management",
+  "outputDirectory": "docs",
+  "buildCommand": "",
+  "installCommand": ""
+}

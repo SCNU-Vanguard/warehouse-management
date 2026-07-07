@@ -11,7 +11,14 @@ const DEMO_RECORDS = [
   { code: "WZ-0003", name: "开发板", type: "outbound", quantity: 1, reason: "借用", detail: "测试台架", operator: "王五", time: new Date().toISOString() }
 ];
 
-const DEFAULT_API_BASE = "https://warehouse-api.hoanglinh4586359.workers.dev";
+const CLOUDFLARE_API_BASE = "https://warehouse-api.hoanglinh4586359.workers.dev";
+
+function defaultApiBase() {
+  const host = window.location.hostname;
+  const isLocal = host === "localhost" || host === "127.0.0.1" || window.location.protocol === "file:";
+  const isGitHubPages = host.endsWith(".github.io");
+  return isLocal || isGitHubPages ? CLOUDFLARE_API_BASE : window.location.origin;
+}
 
 const state = {
   items: [],
@@ -21,7 +28,7 @@ const state = {
   pendingLink: null,
   stream: null,
   scanTimer: null,
-  apiBase: localStorage.getItem("warehouseApiBase") || DEFAULT_API_BASE
+  apiBase: localStorage.getItem("warehouseApiBase") || defaultApiBase()
 };
 
 const $ = (id) => document.getElementById(id);
@@ -52,6 +59,12 @@ const els = {
   detailNote: $("detailNote"),
   detailSn: $("detailSn"),
   detailSnCount: $("detailSnCount"),
+  qrButton: $("qrButton"),
+  qrDialog: $("qrDialog"),
+  includeItemQr: $("includeItemQr"),
+  includeSnQr: $("includeSnQr"),
+  printQrButton: $("printQrButton"),
+  qrLabelSheet: $("qrLabelSheet"),
   movementSnField: $("movementSnField"),
   movementSnInput: $("movementSnInput"),
   inboundTab: $("inboundTab"),
@@ -575,6 +588,100 @@ function updateItemUrl(item, link = {}) {
   history.replaceState(null, "", url);
 }
 
+function appBaseUrl() {
+  return `${window.location.origin}${window.location.pathname}`;
+}
+
+function itemQrUrl(item) {
+  const url = new URL(appBaseUrl());
+  if (item.code) url.searchParams.set("code", item.code);
+  else if (item.recordId) url.searchParams.set("rid", item.recordId);
+  return url.toString();
+}
+
+function snQrUrl(item, sn) {
+  const url = new URL(appBaseUrl());
+  if (item.code) url.searchParams.set("code", item.code);
+  else if (item.recordId) url.searchParams.set("rid", item.recordId);
+  url.searchParams.set("sn", sn);
+  url.searchParams.set("type", "outbound");
+  return url.toString();
+}
+
+function renderQrLabels() {
+  const item = getSelectedItem();
+  els.qrLabelSheet.replaceChildren();
+  if (!item) return;
+
+  const labels = [];
+  if (els.includeItemQr.checked) {
+    labels.push({
+      kind: "物资码",
+      title: item.name,
+      subtitle: item.code || "未设置货物编号",
+      value: itemQrUrl(item)
+    });
+  }
+
+  if (els.includeSnQr.checked) {
+    splitLines(item.sn).forEach((sn) => {
+      labels.push({
+        kind: "SN码",
+        title: item.name,
+        subtitle: sn,
+        value: snQrUrl(item, sn)
+      });
+    });
+  }
+
+  labels.forEach((label) => els.qrLabelSheet.appendChild(createQrLabel(label)));
+  if (labels.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "当前物资没有可生成的标签。";
+    els.qrLabelSheet.appendChild(empty);
+  }
+}
+
+function createQrLabel(label) {
+  const node = document.createElement("article");
+  node.className = "qrLabel";
+
+  const qrBox = document.createElement("div");
+  qrBox.className = "qrCode";
+  qrBox.innerHTML = qrSvg(label.value);
+
+  const text = document.createElement("div");
+  text.className = "qrLabelText";
+  const kind = document.createElement("span");
+  kind.textContent = label.kind;
+  const title = document.createElement("strong");
+  title.textContent = label.title;
+  const subtitle = document.createElement("small");
+  subtitle.textContent = label.subtitle;
+  text.append(kind, title, subtitle);
+
+  node.append(qrBox, text);
+  return node;
+}
+
+function qrSvg(value) {
+  const qr = qrcode(0, "M");
+  qr.addData(value);
+  qr.make();
+  return qr.createSvgTag(3, 2);
+}
+
+function openQrDialog() {
+  renderQrLabels();
+  els.qrDialog.showModal();
+}
+
+function printQrLabels() {
+  renderQrLabels();
+  window.print();
+}
+
 function setStatus(message, isError = false) {
   els.dataModeLabel.textContent = message || (state.apiBase ? "飞书数据" : "演示数据");
   els.dataModeLabel.style.color = isError ? "#d14343" : "";
@@ -611,6 +718,10 @@ function initFromUrl() {
 function bindEvents() {
   els.refreshButton.addEventListener("click", loadData);
   els.searchInput.addEventListener("input", renderItems);
+  els.qrButton.addEventListener("click", openQrDialog);
+  els.includeItemQr.addEventListener("change", renderQrLabels);
+  els.includeSnQr.addEventListener("change", renderQrLabels);
+  els.printQrButton.addEventListener("click", printQrLabels);
   els.inboundTab.addEventListener("click", () => setMovementType("inbound"));
   els.outboundTab.addEventListener("click", () => setMovementType("outbound"));
   els.movementForm.addEventListener("submit", submitMovement);
@@ -625,9 +736,14 @@ function bindEvents() {
     els.settingsDialog.showModal();
   });
   els.saveSettingsButton.addEventListener("click", () => {
-    state.apiBase = els.apiBaseInput.value.trim();
-    if (state.apiBase) localStorage.setItem("warehouseApiBase", state.apiBase);
-    else localStorage.removeItem("warehouseApiBase");
+    const nextApiBase = els.apiBaseInput.value.trim();
+    if (nextApiBase) {
+      state.apiBase = nextApiBase;
+      localStorage.setItem("warehouseApiBase", state.apiBase);
+    } else {
+      localStorage.removeItem("warehouseApiBase");
+      state.apiBase = defaultApiBase();
+    }
     els.settingsDialog.close();
     loadData();
   });

@@ -1,12 +1,16 @@
 ﻿# Warehouse Management Prototype
 
-Minimal warehouse management prototype for GitHub Pages + Cloudflare Workers + Feishu.
+Minimal warehouse management prototype for GitHub Pages + Cloudflare Workers + EdgeOne Makers + Feishu.
 
 ## Architecture
 
 ```text
 GitHub Pages static frontend
 -> Cloudflare Worker API
+-> Feishu wiki sheet / Bitable data source
+
+EdgeOne Makers static frontend
+-> EdgeOne Edge Function API
 -> Feishu wiki sheet / Bitable data source
 ```
 
@@ -24,6 +28,11 @@ docs/
 api/
   worker.js     Cloudflare Workers API proxy for Feishu
   wrangler.toml.example
+
+edge-functions/
+  api/[[default]].js  EdgeOne API wrapper around api/worker.js
+
+edgeone.json          EdgeOne Makers static site configuration
 ```
 
 ## Frontend
@@ -49,6 +58,31 @@ https://scnu-vanguard.github.io/warehouse-management/?code=WZ-0001
 ```
 
 The static page reads `code` from the URL and opens that item.
+
+## EdgeOne Makers
+
+EdgeOne can be added as a China-friendly entry point while keeping GitHub Pages + Cloudflare online.
+
+Create an EdgeOne Makers project from this GitHub repository with:
+
+```text
+Framework: Other / Static
+Root directory: /
+Install command: empty
+Build command: empty
+Output directory: docs
+```
+
+The frontend chooses its API base automatically:
+
+```text
+github.io or localhost -> https://warehouse-api.hoanglinh4586359.workers.dev
+other hosted domains   -> current origin, for example https://example.edgeone.app/api
+```
+
+So the GitHub Pages entry continues to use Cloudflare, and the EdgeOne entry uses the same EdgeOne domain for `/api`.
+
+Add the same Feishu environment variables in EdgeOne project settings. For EdgeOne same-origin deployment, `ALLOWED_ORIGIN` can be the EdgeOne project URL or `*`.
 
 ## API Endpoints
 
