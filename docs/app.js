@@ -55,6 +55,7 @@ const els = {
   detailCode: $("detailCode"),
   detailName: $("detailName"),
   detailStock: $("detailStock"),
+  detailOutbound: $("detailOutbound"),
   detailUnit: $("detailUnit"),
   detailCategory: $("detailCategory"),
   detailOwner: $("detailOwner"),
@@ -159,15 +160,23 @@ function renderAll() {
 
 function renderMetrics() {
   const today = new Date().toDateString();
-  const todayRecords = state.records.filter((record) => new Date(record.time).toDateString() === today);
+  const todayRecords = state.records.filter((record) => isSameDay(record.time, today));
   els.metricItems.textContent = state.items.length;
-  els.metricStock.textContent = state.items.reduce((sum, item) => sum + Number(item.stock || 0), 0);
-  els.metricInbound.textContent = todayRecords
-    .filter((record) => record.type === "inbound")
-    .reduce((sum, record) => sum + Number(record.quantity || 0), 0);
-  els.metricOutbound.textContent = todayRecords
-    .filter((record) => record.type === "outbound")
-    .reduce((sum, record) => sum + Number(record.quantity || 0), 0);
+  els.metricStock.textContent = sumBy(state.items, "stock");
+  els.metricInbound.textContent = sumMovement(todayRecords, "inbound");
+  els.metricOutbound.textContent = sumMovement(todayRecords, "outbound");
+}
+
+function sumBy(rows, key) {
+  return rows.reduce((sum, row) => sum + Number(row[key] || 0), 0);
+}
+
+function sumMovement(records, type) {
+  return records.filter((record) => record.type === type).reduce((sum, record) => sum + Number(record.quantity || 0), 0);
+}
+
+function isSameDay(value, dateString) {
+  return value && new Date(value).toDateString() === dateString;
 }
 
 function renderItems() {
@@ -201,6 +210,7 @@ function renderDetail() {
   els.detailCode.textContent = item.code;
   els.detailName.textContent = item.name;
   els.detailStock.textContent = item.stock;
+  els.detailOutbound.textContent = item.outboundTotal || 0;
   els.detailUnit.textContent = item.unit || "-";
   els.detailCategory.textContent = item.category || "-";
   els.detailOwner.textContent = item.owner || "-";

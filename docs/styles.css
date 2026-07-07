@@ -530,6 +530,12 @@ textarea:focus {
   text-align: right;
 }
 
+.outboundBadge {
+  border-color: rgba(100, 210, 255, 0.24);
+  background: rgba(100, 210, 255, 0.12);
+  color: var(--teal);
+}
+
 .stockBadge span {
   font-size: 12px;
   font-weight: 700;

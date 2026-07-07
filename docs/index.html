@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>物资管理</title>
-    <link rel="stylesheet" href="./styles.css?v=20260707-slide-panels-100ms" />
+    <link rel="stylesheet" href="./styles.css?v=20260707-detail-outbound-1" />
   </head>
   <body>
     <div class="brandV" aria-hidden="true"><img class="brandVImage" src="./assets/flag.jpg" alt="" /></div>
@@ -75,6 +75,10 @@
               <div class="detailHeaderActions">
                 <button id="editItemButton" class="plainButton" type="button">编辑信息</button>
                 <button id="qrButton" class="plainButton" type="button">二维码</button>
+                <div class="stockBadge outboundBadge">
+                  <span>累计出库</span>
+                  <strong id="detailOutbound">0</strong>
+                </div>
                 <div class="stockBadge">
                   <span>当前库存</span>
                   <strong id="detailStock">0</strong>
@@ -214,7 +218,7 @@
     </template>
 
     <script src="./vendor/qrcode.js?v=1.4.4"></script>
-    <script src="./app.js?v=20260707-slide-panels-100ms" defer></script>
+    <script src="./app.js?v=20260707-detail-outbound-1" defer></script>
   </body>
 </html>
 
