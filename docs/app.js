@@ -238,7 +238,8 @@ function renderRecords() {
     const title = document.createElement("strong");
     title.textContent = `${record.name || record.code} · ${record.operator || "未填写"}`;
     const small = document.createElement("small");
-    small.textContent = [formatTime(record.time), record.reason, record.detail].filter(Boolean).join(" / ");
+    const snText = record.sn ? `SN：${record.sn}` : "";
+    small.textContent = [formatTime(record.time), record.reason, snText, record.detail].filter(Boolean).join(" / ");
     text.append(title, small);
 
     const qty = document.createElement("strong");
