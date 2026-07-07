@@ -18,6 +18,7 @@ const state = {
   records: [],
   selectedKey: null,
   selectedSn: [],
+  pendingLink: null,
   stream: null,
   scanTimer: null,
   apiBase: localStorage.getItem("warehouseApiBase") || DEFAULT_API_BASE
@@ -100,6 +101,7 @@ async function loadData() {
     state.items = structuredClone(DEMO_ITEMS);
     state.records = structuredClone(DEMO_RECORDS);
     els.dataModeLabel.textContent = "演示数据";
+    applyPendingLink();
     renderAll();
     setStatus("");
     return;
@@ -113,6 +115,7 @@ async function loadData() {
     state.items = itemsData.items || [];
     state.records = recordsData.records || [];
     els.dataModeLabel.textContent = "飞书数据";
+    applyPendingLink();
     renderAll();
     setStatus("");
   } catch (error) {
@@ -324,6 +327,10 @@ function splitLines(value) {
   return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
+function normalizeSnLine(value) {
+  return String(value || "").replace(/\s+/g, "").toLowerCase();
+}
+
 function setMovementType(type) {
   els.movementType.value = type;
   els.inboundTab.classList.toggle("active", type === "inbound");
@@ -468,22 +475,104 @@ function stopScanner() {
 }
 
 function openCode(raw) {
-  const code = extractItemCode(raw);
-  if (!code) return;
-  selectItem(code);
+  const link = parseQrPayload(raw);
+  if (!link.code && !link.recordId && link.snLines.length === 0) return;
+  if (!applyDeepLink(link, true)) {
+    state.pendingLink = link;
+  }
 }
 
 function extractItemCode(raw) {
+  return parseQrPayload(raw).code;
+}
+
+function parseQrPayload(raw) {
   const value = String(raw || "").trim();
-  if (!value) return "";
+  const empty = { code: "", recordId: "", snLines: [], type: "" };
+  if (!value) return empty;
   try {
     const url = new URL(value);
-    if (url.searchParams.has("code")) return String(url.searchParams.get("code") || "").trim();
-    if (url.searchParams.has("item")) return String(url.searchParams.get("item") || "").trim();
-    return value;
+    const type = String(url.searchParams.get("type") || url.searchParams.get("mode") || url.searchParams.get("action") || "").trim();
+    return {
+      code: String(url.searchParams.get("code") || url.searchParams.get("item") || "").trim(),
+      recordId: String(url.searchParams.get("rid") || url.searchParams.get("recordId") || "").trim(),
+      snLines: splitLines(url.searchParams.get("sn") || url.searchParams.get("serial") || ""),
+      type: normalizeMovementType(type)
+    };
   } catch {
-    return value;
+    return { ...empty, code: value };
   }
+}
+
+function normalizeMovementType(value) {
+  if (value === "out" || value === "outbound" || value === "出库") return "outbound";
+  if (value === "in" || value === "inbound" || value === "入库") return "inbound";
+  return "";
+}
+
+function applyPendingLink() {
+  if (!state.pendingLink) return;
+  if (applyDeepLink(state.pendingLink, false)) {
+    state.pendingLink = null;
+  }
+}
+
+function applyDeepLink(link, updateUrl) {
+  const item = findDeepLinkItem(link);
+  if (!item) {
+    setStatus("未找到二维码对应物资", true);
+    return false;
+  }
+
+  state.selectedKey = itemKey(item);
+  state.selectedSn = matchSnLines(item, link.snLines);
+  if (updateUrl) updateItemUrl(item, link);
+  if (link.type) setMovementType(link.type);
+  if (state.selectedSn.length > 0) {
+    els.movementSnInput.value = state.selectedSn.join("\n");
+    els.quantityInput.value = state.selectedSn.length;
+    if (!link.type) setMovementType("outbound");
+  }
+  renderItems();
+  renderDetail();
+  return true;
+}
+
+function findDeepLinkItem(link) {
+  if (link.recordId) {
+    const byRecordId = state.items.find((item) => item.recordId === link.recordId);
+    if (byRecordId) return byRecordId;
+  }
+  if (link.code) {
+    const byCode = state.items.find((item) => item.code === link.code);
+    if (byCode) return byCode;
+  }
+  if (link.snLines.length > 0) {
+    return state.items.find((item) => matchSnLines(item, link.snLines).length > 0) || null;
+  }
+  return null;
+}
+
+function matchSnLines(item, wantedLines) {
+  const available = splitLines(item.sn);
+  return wantedLines
+    .map((wanted) => available.find((line) => normalizeSnLine(line) === normalizeSnLine(wanted)) || wanted)
+    .filter(Boolean);
+}
+
+function updateItemUrl(item, link = {}) {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("code");
+  url.searchParams.delete("rid");
+  url.searchParams.delete("sn");
+  url.searchParams.delete("type");
+  url.searchParams.delete("mode");
+  url.searchParams.delete("action");
+  if (item.code) url.searchParams.set("code", item.code);
+  else if (item.recordId) url.searchParams.set("rid", item.recordId);
+  if (link.snLines?.length) url.searchParams.set("sn", link.snLines.join("\n"));
+  if (link.type) url.searchParams.set("type", link.type);
+  history.replaceState(null, "", url);
 }
 
 function setStatus(message, isError = false) {
@@ -505,11 +594,11 @@ function formatTime(value) {
 
 function initFromUrl() {
   const params = new URLSearchParams(window.location.search);
-  const code = String(params.get("code") || params.get("item") || "").trim();
-  const recordId = String(params.get("rid") || "").trim();
-  if (recordId) state.selectedKey = recordId;
-  else if (code) state.selectedKey = `code:${code}`;
-  else if (params.has("code") || params.has("item") || params.has("rid")) {
+  const link = parseQrPayload(window.location.href);
+  if (link.recordId) state.selectedKey = link.recordId;
+  else if (link.code) state.selectedKey = `code:${link.code}`;
+  if (link.snLines.length > 0 || link.type) state.pendingLink = link;
+  else if (!link.code && !link.recordId && (params.has("code") || params.has("item") || params.has("rid"))) {
     params.delete("code");
     params.delete("item");
     params.delete("rid");
