@@ -86,22 +86,32 @@ async function createMovement(env, type, payload) {
   const fields = fieldNames(env);
   await updateInventoryRow(env, item, stockUpdateFields(env, type, item, quantity, nextStock, fields));
 
+  let recordWarning = "";
   if (env.FEISHU_RECORDS_TABLE_ID) {
-    await createMovementRecord(env, {
-      [fields.recordCode]: item.code,
-      [fields.recordName]: item.name,
-      [fields.recordType]: type === "inbound" ? "入库" : "出库",
-      [fields.recordQuantity]: quantity,
-      [fields.reason]: reason,
-      [fields.detail]: detail,
-      [fields.operator]: operator,
-      [fields.time]: Date.now()
-    });
+    try {
+      await createMovementRecord(env, movementRecordFields(fields, type, item, quantity, reason, detail, operator));
+    } catch (error) {
+      recordWarning = `库存已更新，但出入库记录写入失败：${error.message || "unknown error"}`;
+    }
   }
 
   return {
     item: { ...item, stock: nextStock },
-    movement: { code: item.code, type, quantity, reason, detail, operator, time: new Date().toISOString() }
+    movement: { code: item.code, type, quantity, reason, detail, operator, time: new Date().toISOString() },
+    warning: recordWarning
+  };
+}
+
+function movementRecordFields(fields, type, item, quantity, reason, detail, operator) {
+  return {
+    [fields.recordCode]: item.code || "",
+    [fields.recordName]: item.name || "",
+    [fields.recordType]: type === "inbound" ? "入库" : "出库",
+    [fields.recordQuantity]: String(quantity),
+    [fields.reason]: reason || "",
+    [fields.detail]: detail || "",
+    [fields.operator]: operator || "",
+    [fields.time]: formatLocalDateTime(new Date())
   };
 }
 
@@ -443,6 +453,11 @@ function timeValue(value) {
   const maybeNumber = Number(text);
   if (Number.isFinite(maybeNumber) && maybeNumber > 0) return new Date(maybeNumber).toISOString();
   return text;
+}
+
+function formatLocalDateTime(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function columnLetters(index) {

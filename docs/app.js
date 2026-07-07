@@ -333,13 +333,15 @@ async function submitMovement(event) {
 
   setFormStatus("正在提交...");
   try {
+    let submitWarning = "";
     if (state.apiBase) {
-      await requestJson(type === "inbound" ? "/api/inbound" : "/api/outbound", {
+      const result = await requestJson(type === "inbound" ? "/api/inbound" : "/api/outbound", {
         method: "POST",
         body: JSON.stringify(payload)
       });
       await loadData();
       selectItem(item.recordId ? state.items.find((entry) => entry.recordId === item.recordId) || item.code : item.code);
+      submitWarning = result.warning || "";
     } else {
       applyDemoMovement(type, payload);
       renderAll();
@@ -347,7 +349,7 @@ async function submitMovement(event) {
     els.movementForm.reset();
     els.movementType.value = type;
     setMovementType(type);
-    setFormStatus("已提交", false);
+    setFormStatus(submitWarning || "已提交", Boolean(submitWarning));
   } catch (error) {
     setFormStatus(error.message, true);
   }
