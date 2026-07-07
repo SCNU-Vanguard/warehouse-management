@@ -550,13 +550,31 @@ textarea:focus {
 }
 
 .snList {
+  display: grid;
+  gap: 6px;
   max-height: 180px;
   margin: 0;
   overflow: auto;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--ink);
   font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.snChoice {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--ink);
+  padding: 7px 9px;
+  text-align: left;
+  white-space: normal;
+}
+
+.snChoice.active {
+  border-color: rgba(41, 151, 255, 0.72);
+  background: rgba(41, 151, 255, 0.18);
 }
 
 .formStatus {

@@ -71,6 +71,7 @@ async function createMovement(env, type, payload) {
   const reason = String(payload.reason || "").trim();
   const detail = String(payload.detail || "").trim();
   const operator = String(payload.operator || "").trim();
+  const snLines = parseSnPayload(payload.sn ?? payload.snText);
 
   if (!code && !recordId) throw new Error("code or recordId is required");
   if (!Number.isInteger(quantity) || quantity <= 0) throw new Error("quantity must be a positive integer");
@@ -89,12 +90,17 @@ async function createMovement(env, type, payload) {
 
   const nextStock = type === "inbound" ? currentStock + quantity : currentStock - quantity;
   const fields = fieldNames(env);
-  await updateInventoryRow(env, item, stockUpdateFields(env, type, item, quantity, nextStock, fields));
+  const currentSnLines = splitSnLines(item.sn);
+  const nextSnLines = nextInventorySnLines(type, currentSnLines, snLines, quantity);
+  await updateInventoryRow(env, item, {
+    ...stockUpdateFields(env, type, item, quantity, nextStock, fields),
+    ...(shouldUpdateSn(type, snLines, currentSnLines) ? { [fields.sn]: nextSnLines.join("\n") } : {})
+  });
 
   let recordWarning = "";
   if (env.FEISHU_RECORDS_TABLE_ID) {
     try {
-      await createMovementRecordWithFallback(env, fields, type, item, quantity, reason, detail, operator);
+      await createMovementRecordWithFallback(env, fields, type, item, quantity, reason, detail, operator, snLines);
     } catch (error) {
       recordWarning = `库存已更新，但出入库记录写入失败：${error.message || "unknown error"}`;
     }
@@ -102,18 +108,61 @@ async function createMovement(env, type, payload) {
 
   return {
     item: { ...item, stock: nextStock },
-    movement: { code: item.code, type, quantity, reason, detail, operator, time: new Date().toISOString() },
+    movement: { code: item.code, type, quantity, reason, detail, operator, sn: snLines, time: new Date().toISOString() },
     warning: recordWarning
   };
 }
 
-async function createMovementRecordWithFallback(env, fields, type, item, quantity, reason, detail, operator) {
+function nextInventorySnLines(type, currentSnLines, movementSnLines, quantity) {
+  if (type === "inbound") {
+    if (movementSnLines.length > 0 && movementSnLines.length !== quantity) {
+      throw new Error(`SN count must equal inbound quantity: ${quantity}`);
+    }
+    return [...currentSnLines, ...movementSnLines];
+  }
+
+  if (currentSnLines.length > 0 && movementSnLines.length !== quantity) {
+    throw new Error(`SN count must equal outbound quantity: ${quantity}`);
+  }
+  if (movementSnLines.length === 0) return currentSnLines;
+
+  const remaining = [...currentSnLines];
+  for (const sn of movementSnLines) {
+    const index = remaining.findIndex((line) => sameSnLine(line, sn));
+    if (index < 0) throw new Error(`SN not found in inventory: ${sn}`);
+    remaining.splice(index, 1);
+  }
+  return remaining;
+}
+
+function shouldUpdateSn(type, movementSnLines, currentSnLines) {
+  return movementSnLines.length > 0 || (type === "outbound" && currentSnLines.length > 0);
+}
+
+function parseSnPayload(value) {
+  if (Array.isArray(value)) return value.map((entry) => String(entry || "").trim()).filter(Boolean);
+  return splitSnLines(value);
+}
+
+function splitSnLines(value) {
+  return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function sameSnLine(a, b) {
+  return normalizeSnLine(a) === normalizeSnLine(b);
+}
+
+function normalizeSnLine(value) {
+  return String(value || "").replace(/\s+/g, "").toLowerCase();
+}
+
+async function createMovementRecordWithFallback(env, fields, type, item, quantity, reason, detail, operator, snLines) {
   const now = new Date();
   const variants = [
-    movementRecordFields(fields, type, item, quantity, reason, detail, operator, { quantity, time: now.getTime() }),
-    movementRecordFields(fields, type, item, quantity, reason, detail, operator, { quantity: String(quantity), time: now.getTime() }),
-    movementRecordFields(fields, type, item, quantity, reason, detail, operator, { quantity: String(quantity), time: formatLocalDateTime(now) }),
-    movementRecordFields(fields, type, item, quantity, reason, detail, operator, { quantity: String(quantity), time: null })
+    movementRecordFields(fields, type, item, quantity, reason, detail, operator, snLines, { quantity, time: now.getTime() }),
+    movementRecordFields(fields, type, item, quantity, reason, detail, operator, snLines, { quantity: String(quantity), time: now.getTime() }),
+    movementRecordFields(fields, type, item, quantity, reason, detail, operator, snLines, { quantity: String(quantity), time: formatLocalDateTime(now) }),
+    movementRecordFields(fields, type, item, quantity, reason, detail, operator, snLines, { quantity: String(quantity), time: null })
   ];
 
   let lastError = null;
@@ -127,20 +176,26 @@ async function createMovementRecordWithFallback(env, fields, type, item, quantit
   throw lastError || new Error("record write failed");
 }
 
-function movementRecordFields(fields, type, item, quantity, reason, detail, operator, overrides = {}) {
+function movementRecordFields(fields, type, item, quantity, reason, detail, operator, snLines, overrides = {}) {
   const record = {
     [fields.recordCode]: item.code || "",
     [fields.recordName]: item.name || "",
     [fields.recordType]: type === "inbound" ? "入库" : "出库",
     [fields.recordQuantity]: overrides.quantity ?? quantity,
     [fields.reason]: reason || "",
-    [fields.detail]: detail || "",
+    [fields.detail]: detailWithSn(detail, snLines),
     [fields.operator]: operator || ""
   };
+  if (fields.recordSn && snLines.length > 0) record[fields.recordSn] = snLines.join("\n");
   if (overrides.time !== null) {
     record[fields.time] = overrides.time ?? Date.now();
   }
   return record;
+}
+
+function detailWithSn(detail, snLines) {
+  if (snLines.length === 0) return detail || "";
+  return [detail || "", `SN: ${snLines.join("\n")}`].filter(Boolean).join("\n");
 }
 
 async function getItems(env) {
@@ -464,6 +519,7 @@ function fieldNames(env) {
     recordName: env.FIELD_RECORD_NAME || env.FIELD_NAME || "货品",
     recordType: env.FIELD_RECORD_TYPE || "类型",
     recordQuantity: env.FIELD_RECORD_QTY || "数量",
+    recordSn: env.FIELD_RECORD_SN || "",
     reason: env.FIELD_REASON || "出库原因",
     detail: env.FIELD_DETAIL || "具体信息",
     operator: env.FIELD_OPERATOR || "操作人",

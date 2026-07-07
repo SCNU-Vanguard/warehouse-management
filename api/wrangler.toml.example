@@ -41,6 +41,8 @@ FIELD_RECORD_CODE = "货物编号"
 FIELD_RECORD_NAME = "货品"
 FIELD_RECORD_TYPE = "类型"
 FIELD_RECORD_QTY = "数量"
+# Optional if your movement record table has a separate SN column.
+# FIELD_RECORD_SN = "SN码"
 FIELD_REASON = "出库原因"
 FIELD_DETAIL = "具体信息"
 FIELD_OPERATOR = "操作人"

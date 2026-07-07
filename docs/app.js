@@ -17,6 +17,7 @@ const state = {
   items: [],
   records: [],
   selectedKey: null,
+  selectedSn: [],
   stream: null,
   scanTimer: null,
   apiBase: localStorage.getItem("warehouseApiBase") || DEFAULT_API_BASE
@@ -50,6 +51,8 @@ const els = {
   detailNote: $("detailNote"),
   detailSn: $("detailSn"),
   detailSnCount: $("detailSnCount"),
+  movementSnField: $("movementSnField"),
+  movementSnInput: $("movementSnInput"),
   inboundTab: $("inboundTab"),
   outboundTab: $("outboundTab"),
   movementType: $("movementType"),
@@ -177,8 +180,37 @@ function renderDetail() {
   els.detailCategory.textContent = item.category || "-";
   els.detailOwner.textContent = item.owner || "-";
   els.detailNote.textContent = item.note || "-";
-  els.detailSn.textContent = item.sn || "-";
-  els.detailSnCount.textContent = `${splitLines(item.sn).length} 条`;
+  renderSnList(item);
+}
+
+function renderSnList(item) {
+  const snLines = splitLines(item.sn);
+  els.detailSnCount.textContent = `${snLines.length} 条`;
+  els.detailSn.replaceChildren();
+  if (snLines.length === 0) {
+    els.detailSn.textContent = "-";
+    return;
+  }
+
+  snLines.forEach((sn) => {
+    const button = document.createElement("button");
+    button.className = "snChoice";
+    button.type = "button";
+    button.textContent = sn;
+    button.classList.toggle("active", state.selectedSn.includes(sn));
+    button.addEventListener("click", () => toggleSnSelection(sn));
+    els.detailSn.appendChild(button);
+  });
+}
+
+function toggleSnSelection(sn) {
+  if (state.selectedSn.includes(sn)) {
+    state.selectedSn = state.selectedSn.filter((entry) => entry !== sn);
+  } else {
+    state.selectedSn = [...state.selectedSn, sn];
+  }
+  els.movementSnInput.value = state.selectedSn.join("\n");
+  renderDetail();
 }
 
 function renderRecords() {
@@ -254,6 +286,7 @@ function selectItem(itemOrCode) {
     return;
   }
   state.selectedKey = itemKey(item);
+  state.selectedSn = [];
   const url = new URL(window.location.href);
   url.searchParams.delete("code");
   url.searchParams.delete("rid");
@@ -298,6 +331,12 @@ function setMovementType(type) {
   els.reasonField.classList.toggle("hidden", type !== "outbound");
   els.reasonInput.required = type === "outbound";
   els.detailInput.required = type === "outbound";
+  els.movementSnInput.placeholder = type === "outbound" ? "填写本次出库的SN，一行一个" : "填写本次入库新增的SN，一行一个";
+  if (type === "inbound") {
+    state.selectedSn = [];
+    els.movementSnInput.value = "";
+    renderDetail();
+  }
   els.formStatus.textContent = "";
   els.formStatus.className = "formStatus";
 }
@@ -309,10 +348,12 @@ async function submitMovement(event) {
 
   const type = els.movementType.value;
   const quantity = Number(els.quantityInput.value);
+  const snLines = splitLines(els.movementSnInput.value);
   const payload = {
     code: item.code,
     recordId: item.recordId,
     quantity,
+    sn: snLines,
     reason: els.reasonInput.value.trim(),
     detail: els.detailInput.value.trim(),
     operator: els.operatorInput.value.trim()
@@ -328,6 +369,15 @@ async function submitMovement(event) {
   }
   if (type === "outbound" && (!payload.reason || !payload.detail)) {
     setFormStatus("出库原因和具体信息必须填写", true);
+    return;
+  }
+  const itemSnLines = splitLines(item.sn);
+  if (type === "outbound" && itemSnLines.length > 0 && snLines.length !== quantity) {
+    setFormStatus(`该物资有SN码，请填写 ${quantity} 个本次出库SN`, true);
+    return;
+  }
+  if (type === "inbound" && snLines.length > 0 && snLines.length !== quantity) {
+    setFormStatus(`填写了SN码时，SN数量需要等于入库数量：${quantity} 个`, true);
     return;
   }
 
@@ -347,6 +397,7 @@ async function submitMovement(event) {
       renderAll();
     }
     els.movementForm.reset();
+    state.selectedSn = [];
     els.movementType.value = type;
     setMovementType(type);
     setFormStatus(submitWarning || "已提交", Boolean(submitWarning));

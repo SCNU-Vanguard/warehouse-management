@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>物资管理</title>
-    <link rel="stylesheet" href="./styles.css?v=20260707-recordid-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260707-sn-1" />
   </head>
   <body>
     <div class="brandV" aria-hidden="true"><img class="brandVImage" src="./assets/flag.jpg" alt="" /></div>
@@ -90,7 +90,7 @@
                 <h2>SN码</h2>
                 <span id="detailSnCount">0 条</span>
               </div>
-              <pre id="detailSn" class="snList">-</pre>
+              <div id="detailSn" class="snList">-</div>
             </div>
 
             <div class="actionTabs" role="tablist">
@@ -103,6 +103,10 @@
               <label>
                 <span>数量</span>
                 <input id="quantityInput" type="number" min="1" step="1" required />
+              </label>
+              <label id="movementSnField">
+                <span>本次SN码</span>
+                <textarea id="movementSnInput" rows="3" placeholder="一行一个SN码"></textarea>
               </label>
               <label id="reasonField" class="hidden">
                 <span>出库原因</span>
@@ -165,7 +169,7 @@
       </button>
     </template>
 
-    <script src="./app.js?v=20260707-recordid-2" defer></script>
+    <script src="./app.js?v=20260707-sn-1" defer></script>
   </body>
 </html>
 
