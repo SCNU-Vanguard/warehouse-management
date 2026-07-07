@@ -1,8 +1,8 @@
 ﻿const DEMO_ITEMS = [
-  { code: "WZ-0001", name: "电源适配器 12V", stock: 36, unit: "个", category: "电子", note: "常用备件" },
-  { code: "WZ-0002", name: "网线 2m", stock: 120, unit: "根", category: "耗材", note: "蓝色" },
-  { code: "WZ-0003", name: "开发板", stock: 18, unit: "块", category: "设备", note: "研发借用" },
-  { code: "WZ-0004", name: "M3 螺丝包", stock: 240, unit: "包", category: "五金", note: "每包 100 颗" }
+  { recordId: "demo-1", code: "WZ-0001", name: "电源适配器 12V", sn: "SN-DEMO-001（日常使用）", stock: 36, unit: "个", category: "电子", owner: "张三", note: "常用备件" },
+  { recordId: "demo-2", code: "WZ-0002", name: "网线 2m", sn: "SN-DEMO-002", stock: 120, unit: "根", category: "耗材", owner: "李四", note: "蓝色" },
+  { recordId: "demo-3", code: "WZ-0003", name: "开发板", sn: "SN-DEMO-003（测试台架）", stock: 18, unit: "块", category: "设备", owner: "王五", note: "研发借用" },
+  { recordId: "demo-4", code: "WZ-0004", name: "M3 螺丝包", sn: "", stock: 240, unit: "包", category: "五金", owner: "", note: "每包 100 颗" }
 ];
 
 const DEMO_RECORDS = [
@@ -16,7 +16,7 @@ const DEFAULT_API_BASE = "https://warehouse-api.hoanglinh4586359.workers.dev";
 const state = {
   items: [],
   records: [],
-  selectedCode: null,
+  selectedKey: null,
   stream: null,
   scanTimer: null,
   apiBase: localStorage.getItem("warehouseApiBase") || DEFAULT_API_BASE
@@ -46,7 +46,10 @@ const els = {
   detailStock: $("detailStock"),
   detailUnit: $("detailUnit"),
   detailCategory: $("detailCategory"),
+  detailOwner: $("detailOwner"),
   detailNote: $("detailNote"),
+  detailSn: $("detailSn"),
+  detailSnCount: $("detailSnCount"),
   inboundTab: $("inboundTab"),
   outboundTab: $("outboundTab"),
   movementType: $("movementType"),
@@ -146,17 +149,17 @@ function renderItems() {
 
   state.items
     .filter((item) => {
-      const haystack = `${item.code} ${item.name} ${item.category || ""}`.toLowerCase();
+      const haystack = `${item.code} ${item.name} ${item.sn || ""} ${item.owner || ""} ${item.category || ""} ${item.note || ""}`.toLowerCase();
       return haystack.includes(query);
     })
     .forEach((item) => {
       const node = template.content.firstElementChild.cloneNode(true);
-      node.dataset.code = item.code;
-      node.classList.toggle("active", item.code === state.selectedCode);
+      node.dataset.key = itemKey(item);
+      node.classList.toggle("active", isSelectedItem(item));
       node.querySelector(".itemName").textContent = item.name;
-      node.querySelector(".itemCode").textContent = item.code;
+      node.querySelector(".itemCode").textContent = item.code || "未设置货物编号";
       node.querySelector(".itemQty").textContent = `${item.stock}${item.unit || ""}`;
-      node.addEventListener("click", () => selectItem(item.code));
+      node.addEventListener("click", () => selectItem(item));
       els.itemList.appendChild(node);
     });
 }
@@ -172,7 +175,10 @@ function renderDetail() {
   els.detailStock.textContent = item.stock;
   els.detailUnit.textContent = item.unit || "-";
   els.detailCategory.textContent = item.category || "-";
+  els.detailOwner.textContent = item.owner || "-";
   els.detailNote.textContent = item.note || "-";
+  els.detailSn.textContent = item.sn || "-";
+  els.detailSnCount.textContent = `${splitLines(item.sn).length} 条`;
 }
 
 function renderRecords() {
@@ -239,22 +245,48 @@ function renderChart() {
   });
 }
 
-function selectItem(code) {
-  const item = state.items.find((entry) => entry.code === code);
+function selectItem(itemOrCode) {
+  const item = typeof itemOrCode === "object"
+    ? itemOrCode
+    : state.items.find((entry) => entry.code === itemOrCode);
   if (!item) {
-    setStatus(`未找到物资：${code}`, true);
+    setStatus(`未找到物资：${itemOrCode}`, true);
     return;
   }
-  state.selectedCode = code;
+  state.selectedKey = itemKey(item);
   const url = new URL(window.location.href);
-  url.searchParams.set("code", code);
+  url.searchParams.delete("code");
+  url.searchParams.delete("rid");
+  if (item.code) url.searchParams.set("code", item.code);
+  else if (item.recordId) url.searchParams.set("rid", item.recordId);
   history.replaceState(null, "", url);
   renderItems();
   renderDetail();
 }
 
 function getSelectedItem() {
-  return state.items.find((item) => item.code === state.selectedCode) || null;
+  if (!state.selectedKey) return null;
+  if (state.selectedKey.startsWith("code:")) {
+    const code = state.selectedKey.slice("code:".length);
+    return state.items.find((item) => item.code === code) || null;
+  }
+  return state.items.find((item) => itemKey(item) === state.selectedKey) || null;
+}
+
+function itemKey(item) {
+  return item.recordId || `code:${item.code}`;
+}
+
+function isSelectedItem(item) {
+  if (!state.selectedKey) return false;
+  if (state.selectedKey.startsWith("code:")) {
+    return item.code === state.selectedKey.slice("code:".length);
+  }
+  return itemKey(item) === state.selectedKey;
+}
+
+function splitLines(value) {
+  return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
 function setMovementType(type) {
@@ -277,6 +309,7 @@ async function submitMovement(event) {
   const quantity = Number(els.quantityInput.value);
   const payload = {
     code: item.code,
+    recordId: item.recordId,
     quantity,
     reason: els.reasonInput.value.trim(),
     detail: els.detailInput.value.trim(),
@@ -304,7 +337,7 @@ async function submitMovement(event) {
         body: JSON.stringify(payload)
       });
       await loadData();
-      selectItem(item.code);
+      selectItem(item.recordId ? state.items.find((entry) => entry.recordId === item.recordId) || item.code : item.code);
     } else {
       applyDemoMovement(type, payload);
       renderAll();
@@ -416,7 +449,9 @@ function formatTime(value) {
 function initFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code") || params.get("item");
-  if (code) state.selectedCode = code;
+  const recordId = params.get("rid");
+  if (recordId) state.selectedKey = recordId;
+  else if (code) state.selectedKey = `code:${code}`;
 }
 
 function bindEvents() {

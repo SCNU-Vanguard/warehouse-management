@@ -61,19 +61,20 @@ export default {
 
 async function createMovement(env, type, payload) {
   const code = String(payload.code || "").trim();
+  const recordId = String(payload.recordId || "").trim();
   const quantity = Number(payload.quantity);
   const reason = String(payload.reason || "").trim();
   const detail = String(payload.detail || "").trim();
   const operator = String(payload.operator || "").trim();
 
-  if (!code) throw new Error("code is required");
+  if (!code && !recordId) throw new Error("code or recordId is required");
   if (!Number.isInteger(quantity) || quantity <= 0) throw new Error("quantity must be a positive integer");
   if (!operator) throw new Error("operator is required");
   if (type === "outbound" && (!reason || !detail)) {
     throw new Error("reason and detail are required for outbound movements");
   }
 
-  const item = await findItemByCode(env, code);
+  const item = await findItem(env, { code, recordId });
   if (!item) throw new Error("item not found");
 
   const currentStock = Number(item.stock || 0);
@@ -100,7 +101,7 @@ async function createMovement(env, type, payload) {
 
   return {
     item: { ...item, stock: nextStock },
-    movement: { code, type, quantity, reason, detail, operator, time: new Date().toISOString() }
+    movement: { code: item.code, type, quantity, reason, detail, operator, time: new Date().toISOString() }
   };
 }
 
@@ -132,8 +133,12 @@ async function getRecords(env) {
 }
 
 async function findItemByCode(env, code) {
+  return findItem(env, { code });
+}
+
+async function findItem(env, { code = "", recordId = "" }) {
   const items = await getItems(env);
-  return items.find((item) => item.code === code) || null;
+  return items.find((item) => (recordId && item.recordId === recordId) || (code && item.code === code)) || null;
 }
 
 function normalizeItem(row, fields) {
@@ -142,9 +147,11 @@ function normalizeItem(row, fields) {
     recordId: row.record_id,
     code: textValue(data[fields.code]),
     name: textValue(data[fields.name]),
+    sn: textValue(data[fields.sn]),
     stock: numberValue(data[fields.stock]),
     inboundTotal: numberValue(data[fields.inQuantity]),
     outboundTotal: numberValue(data[fields.outQuantity]),
+    owner: textValue(data[fields.owner]),
     unit: textValue(data[fields.unit]),
     category: textValue(data[fields.category]),
     qr: textValue(data[fields.qr]),
@@ -374,8 +381,10 @@ function fieldNames(env) {
     code: env.FIELD_CODE || "货物编号",
     name: env.FIELD_NAME || "货品",
     stock: env.FIELD_STOCK || "现有库存数量",
+    sn: env.FIELD_SN || "SN码",
     inQuantity: env.FIELD_IN_QTY || "入库数量",
     outQuantity: env.FIELD_OUT_QTY || "出库数量",
+    owner: env.FIELD_OWNER || "负责人",
     unit: env.FIELD_UNIT || "单位",
     category: env.FIELD_CATEGORY || "分类",
     qr: env.FIELD_QR || "二维码链接",

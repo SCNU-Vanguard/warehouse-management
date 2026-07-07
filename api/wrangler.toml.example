@@ -21,6 +21,7 @@ ALLOWED_ORIGIN = "https://your-org.github.io"
 FIELD_CODE = "货物编号"
 FIELD_NAME = "货品"
 FIELD_STOCK = "现有库存数量"
+FIELD_SN = "SN码"
 FIELD_IN_QTY = "入库数量"
 FIELD_OUT_QTY = "出库数量"
 
@@ -31,6 +32,7 @@ STOCK_WRITE_MODE = "movement_totals"
 # Optional item fields.
 FIELD_UNIT = "单位"
 FIELD_CATEGORY = "分类"
+FIELD_OWNER = "负责人"
 FIELD_QR = "二维码链接"
 FIELD_NOTE = "备注"
 
