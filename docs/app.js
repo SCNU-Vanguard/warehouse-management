@@ -49,6 +49,7 @@ const els = {
   manualCodeInput: $("manualCodeInput"),
   manualCodeButton: $("manualCodeButton"),
   stopScanButton: $("stopScanButton"),
+  detailPane: $("detailPane"),
   emptyDetail: $("emptyDetail"),
   itemDetail: $("itemDetail"),
   detailCode: $("detailCode"),
@@ -193,8 +194,8 @@ function renderItems() {
 
 function renderDetail() {
   const item = getSelectedItem();
-  els.emptyDetail.classList.toggle("hidden", Boolean(item));
-  els.itemDetail.classList.toggle("hidden", !item);
+  els.detailPane.classList.toggle("has-item", Boolean(item));
+  els.detailPane.classList.toggle("is-empty", !item);
   if (!item) return;
 
   els.detailCode.textContent = item.code;
@@ -205,6 +206,13 @@ function renderDetail() {
   els.detailOwner.textContent = item.owner || "-";
   els.detailNote.textContent = item.note || "-";
   renderSnList(item);
+  animateDetailChange();
+}
+
+function animateDetailChange() {
+  els.detailPane.classList.remove("detail-refresh");
+  void els.detailPane.offsetWidth;
+  els.detailPane.classList.add("detail-refresh");
 }
 
 function renderSnList(item) {

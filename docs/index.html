@@ -60,13 +60,13 @@
           <div id="itemList" class="itemList" aria-live="polite"></div>
         </aside>
 
-        <section class="detailPane" aria-label="物资详情">
+        <section id="detailPane" class="detailPane is-empty" aria-label="物资详情">
           <div id="emptyDetail" class="emptyState">
             <strong>选择一个物资</strong>
             <span>扫码或从列表打开后进行入库、出库。</span>
           </div>
 
-          <div id="itemDetail" class="detail hidden">
+          <div id="itemDetail" class="detail">
             <div class="detailHeader">
               <div>
                 <p id="detailCode" class="eyebrow"></p>
@@ -214,7 +214,7 @@
     </template>
 
     <script src="./vendor/qrcode.js?v=1.4.4"></script>
-    <script src="./app.js?v=20260707-edit-profile-1" defer></script>
+    <script src="./app.js?v=20260707-stable-panels-1" defer></script>
   </body>
 </html>
 

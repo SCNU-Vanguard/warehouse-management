@@ -229,6 +229,7 @@ h2 {
 .metricRed strong { color: var(--red); }
 
 .workspace {
+  --workspace-panel-height: clamp(560px, 48vh, 640px);
   display: grid;
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
   gap: 16px;
@@ -248,6 +249,10 @@ h2 {
 }
 
 .leftPane {
+  display: flex;
+  flex-direction: column;
+  height: var(--workspace-panel-height);
+  min-height: 0;
   padding: 14px;
 }
 .leftPane,
@@ -364,9 +369,11 @@ textarea:focus {
 
 .itemList {
   display: grid;
+  flex: 1;
+  align-content: start;
   gap: 8px;
+  min-height: 0;
   margin-top: 12px;
-  max-height: 540px;
   overflow: auto;
 }
 
@@ -420,15 +427,17 @@ textarea:focus {
 }
 
 .detailPane {
-  min-height: 420px;
+  height: var(--workspace-panel-height);
+  min-height: 0;
   padding: 18px;
 }
 
 .emptyState {
+  height: 100%;
   display: grid;
   place-items: center;
   gap: 8px;
-  min-height: 380px;
+  min-height: 0;
   color: var(--muted);
   text-align: center;
 }
@@ -441,6 +450,50 @@ textarea:focus {
 .detail {
   display: grid;
   gap: 16px;
+  max-height: 100%;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.detailPane .emptyState,
+.detailPane .detail {
+  transition:
+    opacity 220ms ease,
+    transform 220ms ease,
+    filter 220ms ease;
+}
+
+.detailPane.is-empty .detail,
+.detailPane.has-item .emptyState {
+  position: absolute;
+  inset: 18px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+  filter: blur(2px);
+}
+
+.detailPane.has-item .detail,
+.detailPane.is-empty .emptyState {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+}
+
+.detailPane.detail-refresh .detail {
+  animation: detailRefresh 220ms ease;
+}
+
+@keyframes detailRefresh {
+  from {
+    opacity: 0.72;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .detailHeader {
