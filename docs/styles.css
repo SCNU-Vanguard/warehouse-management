@@ -232,7 +232,7 @@ h2 {
   display: grid;
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
   gap: 16px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .leftPane,
@@ -248,9 +248,6 @@ h2 {
 }
 
 .leftPane {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
   padding: 14px;
 }
 .leftPane,
@@ -367,11 +364,9 @@ textarea:focus {
 
 .itemList {
   display: grid;
-  flex: 1;
-  align-content: start;
   gap: 8px;
-  min-height: 0;
   margin-top: 12px;
+  max-height: clamp(360px, 50vh, 520px);
   overflow: auto;
 }
 
@@ -425,7 +420,7 @@ textarea:focus {
 }
 
 .detailPane {
-  min-height: 420px;
+  min-height: 0;
   padding: 18px;
 }
 
@@ -881,6 +876,10 @@ dialog {
 
   .scannerControls {
     grid-template-columns: 1fr;
+  }
+
+  .itemList {
+    max-height: 360px;
   }
 }
 
