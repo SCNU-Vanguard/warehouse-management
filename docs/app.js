@@ -1,8 +1,8 @@
 ﻿const DEMO_ITEMS = [
-  { recordId: "demo-1", code: "WZ-0001", name: "电源适配器 12V", sn: "SN-DEMO-001（日常使用）", stock: 36, unit: "个", category: "电子", owner: "张三", note: "常用备件" },
-  { recordId: "demo-2", code: "WZ-0002", name: "网线 2m", sn: "SN-DEMO-002", stock: 120, unit: "根", category: "耗材", owner: "李四", note: "蓝色" },
-  { recordId: "demo-3", code: "WZ-0003", name: "开发板", sn: "SN-DEMO-003（测试台架）", stock: 18, unit: "块", category: "设备", owner: "王五", note: "研发借用" },
-  { recordId: "demo-4", code: "WZ-0004", name: "M3 螺丝包", sn: "", stock: 240, unit: "包", category: "五金", owner: "", note: "每包 100 颗" }
+  { recordId: "demo-1", code: "WZ-0001", name: "电源适配器 12V", sn: "SN-DEMO-001（日常使用）", stock: 36, owner: "张三", note: "常用备件" },
+  { recordId: "demo-2", code: "WZ-0002", name: "网线 2m", sn: "SN-DEMO-002", stock: 120, owner: "李四", note: "蓝色" },
+  { recordId: "demo-3", code: "WZ-0003", name: "开发板", sn: "SN-DEMO-003（测试台架）", stock: 18, owner: "王五", note: "研发借用" },
+  { recordId: "demo-4", code: "WZ-0004", name: "M3 螺丝包", sn: "", stock: 240, owner: "", note: "每包 100 颗" }
 ];
 
 const DEMO_RECORDS = [
@@ -56,8 +56,6 @@ const els = {
   detailName: $("detailName"),
   detailStock: $("detailStock"),
   detailOutbound: $("detailOutbound"),
-  detailUnit: $("detailUnit"),
-  detailCategory: $("detailCategory"),
   detailOwner: $("detailOwner"),
   detailNote: $("detailNote"),
   detailSn: $("detailSn"),
@@ -68,10 +66,6 @@ const els = {
   editCodeInput: $("editCodeInput"),
   editNameInput: $("editNameInput"),
   editSnInput: $("editSnInput"),
-  editUnitInput: $("editUnitInput"),
-  editCategoryInput: $("editCategoryInput"),
-  editOwnerInput: $("editOwnerInput"),
-  editNoteInput: $("editNoteInput"),
   editItemStatus: $("editItemStatus"),
   closeEditDialogButton: $("closeEditDialogButton"),
   cancelEditDialogButton: $("cancelEditDialogButton"),
@@ -186,7 +180,7 @@ function renderItems() {
 
   state.items
     .filter((item) => {
-      const haystack = `${item.code} ${item.name} ${item.sn || ""} ${item.owner || ""} ${item.category || ""} ${item.note || ""}`.toLowerCase();
+      const haystack = `${item.code} ${item.name} ${item.sn || ""} ${item.owner || ""} ${item.note || ""}`.toLowerCase();
       return haystack.includes(query);
     })
     .forEach((item) => {
@@ -211,8 +205,6 @@ function renderDetail() {
   els.detailName.textContent = item.name;
   els.detailStock.textContent = item.stock;
   els.detailOutbound.textContent = item.outboundTotal || 0;
-  els.detailUnit.textContent = item.unit || "-";
-  els.detailCategory.textContent = item.category || "-";
   els.detailOwner.textContent = item.owner || "-";
   els.detailNote.textContent = item.note || "-";
   renderSnList(item);
@@ -734,10 +726,6 @@ function openEditDialog() {
   els.editCodeInput.value = item.code || "";
   els.editNameInput.value = item.name || "";
   els.editSnInput.value = item.sn || "";
-  els.editUnitInput.value = item.unit || "";
-  els.editCategoryInput.value = item.category || "";
-  els.editOwnerInput.value = item.owner || "";
-  els.editNoteInput.value = item.note || "";
   setEditStatus("");
   els.itemEditDialog.showModal();
 }
@@ -759,11 +747,7 @@ async function submitItemEdit(event) {
     recordId: item.recordId,
     nextCode: els.editCodeInput.value.trim(),
     name: els.editNameInput.value.trim(),
-    sn: snLines,
-    unit: els.editUnitInput.value.trim(),
-    category: els.editCategoryInput.value.trim(),
-    owner: els.editOwnerInput.value.trim(),
-    note: els.editNoteInput.value.trim()
+    sn: snLines
   };
 
   if (!payload.nextCode && !payload.name) {
@@ -773,8 +757,9 @@ async function submitItemEdit(event) {
 
   setEditStatus("正在保存...");
   try {
+    let result = null;
     if (state.apiBase) {
-      await requestJson("/api/items/update", {
+      result = await requestJson("/api/items/update", {
         method: "POST",
         body: JSON.stringify(payload)
       });
@@ -787,17 +772,17 @@ async function submitItemEdit(event) {
       Object.assign(item, {
         code: payload.nextCode,
         name: payload.name,
-        sn: snLines.join("\n"),
-        unit: payload.unit,
-        category: payload.category,
-        owner: payload.owner,
-        note: payload.note
+        sn: snLines.join("\n")
       });
       renderAll();
       selectItem(item);
     }
     els.itemEditDialog.close();
-    setStatus("物资信息已保存");
+    if (state.apiBase && Array.isArray(result?.skippedFields) && result.skippedFields.length > 0) {
+      setStatus(`物资信息已保存，已跳过不存在字段：${result.skippedFields.join("、")}`);
+    } else {
+      setStatus("物资信息已保存");
+    }
   } catch (error) {
     setEditStatus(error.message || "保存失败", true);
   }

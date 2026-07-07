@@ -129,19 +129,24 @@ async function updateItemProfile(env, payload) {
   if (!item) throw new Error("item not found");
 
   const fields = fieldNames(env);
+  const availableFields = await getInventoryFieldNameSet(env, item);
+  const skippedFields = [];
   const updates = {};
   const textFields = [
-    ["nextCode", "code", fields.code],
-    ["name", "name", fields.name],
-    ["unit", "unit", fields.unit],
-    ["category", "category", fields.category],
-    ["owner", "owner", fields.owner],
-    ["note", "note", fields.note]
+    ["nextCode", "code", fields.code, true],
+    ["name", "name", fields.name, true],
+    ["owner", "owner", fields.owner, false],
+    ["note", "note", fields.note, false]
   ];
 
-  textFields.forEach(([payloadKey, itemKey, fieldName]) => {
+  textFields.forEach(([payloadKey, itemKey, fieldName, required]) => {
     if (Object.prototype.hasOwnProperty.call(payload, payloadKey)) {
       const nextValue = String(payload[payloadKey] || "").trim();
+      if (!availableFields.has(fieldName)) {
+        if (required) throw new Error(`Feishu field not found: ${fieldName}`);
+        if (nextValue !== String(item[itemKey] || "")) skippedFields.push(fieldName);
+        return;
+      }
       if (nextValue !== String(item[itemKey] || "")) updates[fieldName] = nextValue;
     }
   });
@@ -151,13 +156,26 @@ async function updateItemProfile(env, payload) {
     ensureUniqueSnLines(snLines);
     ensureSnNotUsedByOtherItems(items, item, snLines);
     const nextSn = snLines.join("\n");
-    if (nextSn !== String(item.sn || "")) updates[fields.sn] = nextSn;
+    if (nextSn !== String(item.sn || "")) {
+      if (!availableFields.has(fields.sn)) throw new Error(`Feishu field not found: ${fields.sn}`);
+      updates[fields.sn] = nextSn;
+    }
   }
 
-  if (Object.keys(updates).length === 0) return { item };
+  if (Object.keys(updates).length === 0) return { item, skippedFields };
 
   await updateInventoryRow(env, item, updates);
-  return { item: { ...item, ...profilePatchFromUpdates(fields, updates) } };
+  return { item: { ...item, ...profilePatchFromUpdates(fields, updates) }, skippedFields };
+}
+
+async function getInventoryFieldNameSet(env, item) {
+  const source = await getDataSource(env);
+  if (source.type === "sheet") return new Set(item.meta?.headers || []);
+
+  const tableId = env.FEISHU_ITEMS_TABLE_ID || source.tableId;
+  if (!tableId) throw new Error("Missing environment variable: FEISHU_ITEMS_TABLE_ID");
+  const fields = await listBitableFields(env, source.token, tableId);
+  return new Set(fields.map((field) => field.field_name || field.fieldName).filter(Boolean));
 }
 
 function ensureSnNotUsedByOtherItems(items, currentItem, snLines) {
@@ -179,8 +197,6 @@ function profilePatchFromUpdates(fields, updates) {
     ["code", fields.code],
     ["name", fields.name],
     ["sn", fields.sn],
-    ["unit", fields.unit],
-    ["category", fields.category],
     ["owner", fields.owner],
     ["note", fields.note]
   ];
@@ -337,8 +353,6 @@ function normalizeItem(row, fields) {
     inboundTotal: numberValue(data[fields.inQuantity]),
     outboundTotal: numberValue(data[fields.outQuantity]),
     owner: textValue(data[fields.owner]),
-    unit: textValue(data[fields.unit]),
-    category: textValue(data[fields.category]),
     qr: textValue(data[fields.qr]),
     note: textValue(data[fields.note]),
     meta: row.meta || null
@@ -604,8 +618,6 @@ function fieldNames(env) {
     inQuantity: env.FIELD_IN_QTY || "入库数量",
     outQuantity: env.FIELD_OUT_QTY || "出库数量",
     owner: env.FIELD_OWNER || "负责人",
-    unit: env.FIELD_UNIT || "单位",
-    category: env.FIELD_CATEGORY || "分类",
     qr: env.FIELD_QR || "二维码链接",
     note: env.FIELD_NOTE || "备注",
     recordCode: env.FIELD_RECORD_CODE || env.FIELD_CODE || "货物编号",
@@ -713,8 +725,6 @@ function corsHeaders(env, request) {
     "Vary": "Origin"
   };
 }
-
-
 
 
 

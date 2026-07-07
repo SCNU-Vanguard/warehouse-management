@@ -42,7 +42,7 @@
           <div class="toolbar">
             <label class="searchBox">
               <span>搜索</span>
-              <input id="searchInput" type="search" placeholder="编号 / 名称 / 分类" autocomplete="off" />
+              <input id="searchInput" type="search" placeholder="编号 / 名称" autocomplete="off" />
             </label>
             <button id="scanButton" class="primaryButton" type="button">扫码</button>
           </div>
@@ -87,8 +87,6 @@
             </div>
 
             <div class="metaGrid">
-              <div><span>单位</span><strong id="detailUnit">-</strong></div>
-              <div><span>分类</span><strong id="detailCategory">-</strong></div>
               <div><span>负责人</span><strong id="detailOwner">-</strong></div>
               <div><span>备注</span><strong id="detailNote">-</strong></div>
             </div>
@@ -183,22 +181,6 @@
           <span>SN码</span>
           <textarea id="editSnInput" rows="5" placeholder="一行一个SN码"></textarea>
         </label>
-        <label>
-          <span>单位</span>
-          <input id="editUnitInput" type="text" />
-        </label>
-        <label>
-          <span>分类</span>
-          <input id="editCategoryInput" type="text" />
-        </label>
-        <label>
-          <span>负责人</span>
-          <input id="editOwnerInput" type="text" />
-        </label>
-        <label>
-          <span>备注</span>
-          <textarea id="editNoteInput" rows="3"></textarea>
-        </label>
         <div class="dialogActions">
           <button id="cancelEditDialogButton" value="cancel" type="button">取消</button>
           <button class="primaryButton" type="submit">保存</button>
@@ -218,7 +200,7 @@
     </template>
 
     <script src="./vendor/qrcode.js?v=1.4.4"></script>
-    <script src="./app.js?v=20260707-qr-minimal-1" defer></script>
+    <script src="./app.js?v=20260707-edit-core-fields-1" defer></script>
   </body>
 </html>
 

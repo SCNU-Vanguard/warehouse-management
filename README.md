@@ -11,7 +11,7 @@ _https://scnu-vanguard.github.io/warehouse-management/_
 - 查看物资列表、库存、负责人、备注和 SN 码
 - 顶部统计物资种类、当前库存、今日入库、今日出库
 - 物资详情显示当前库存和累计出库
-- 按物资编号、名称、分类搜索
+- 按物资编号、名称搜索
 - 入库、出库，并同步更新飞书表格
 - 出库时记录原因、具体信息、操作人
 - 支持扫码打开指定物资
@@ -80,8 +80,6 @@ SN码
 出库数量
 现有库存数量
 负责人
-单位
-分类
 备注
 二维码链接
 ```
@@ -213,8 +211,6 @@ FIELD_SN=SN码
 FIELD_IN_QTY=入库数量
 FIELD_OUT_QTY=出库数量
 STOCK_WRITE_MODE=movement_totals
-FIELD_UNIT=单位
-FIELD_CATEGORY=分类
 FIELD_OWNER=负责人
 FIELD_QR=二维码链接
 FIELD_NOTE=备注

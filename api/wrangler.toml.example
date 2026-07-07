@@ -30,8 +30,6 @@ FIELD_OUT_QTY = "出库数量"
 STOCK_WRITE_MODE = "movement_totals"
 
 # Optional item fields.
-FIELD_UNIT = "单位"
-FIELD_CATEGORY = "分类"
 FIELD_OWNER = "负责人"
 FIELD_QR = "二维码链接"
 FIELD_NOTE = "备注"
