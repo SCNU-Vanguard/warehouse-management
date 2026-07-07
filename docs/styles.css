@@ -229,7 +229,7 @@ h2 {
 .metricRed strong { color: var(--red); }
 
 .workspace {
-  --workspace-panel-height: clamp(560px, 48vh, 640px);
+  --workspace-panel-height: 620px;
   display: grid;
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
   gap: 16px;
@@ -458,9 +458,9 @@ textarea:focus {
 .detailPane .emptyState,
 .detailPane .detail {
   transition:
-    opacity 220ms ease,
-    transform 220ms ease,
-    filter 220ms ease;
+    opacity 2200ms ease,
+    transform 2200ms ease,
+    filter 2200ms ease;
 }
 
 .detailPane.is-empty .detail,
@@ -481,7 +481,7 @@ textarea:focus {
 }
 
 .detailPane.detail-refresh .detail {
-  animation: detailRefresh 220ms ease;
+  animation: detailRefresh 2200ms ease;
 }
 
 @keyframes detailRefresh {
