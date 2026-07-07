@@ -195,7 +195,7 @@ function renderItems() {
       node.classList.toggle("active", isSelectedItem(item));
       node.querySelector(".itemName").textContent = item.name;
       node.querySelector(".itemCode").textContent = item.code || "未设置货物编号";
-      node.querySelector(".itemQty").textContent = `${item.stock}${item.unit || ""}`;
+      node.querySelector(".itemQty").textContent = `${Number(item.stock || 0)}/${Number(item.inboundTotal || 0)}`;
       node.addEventListener("click", () => selectItem(item));
       els.itemList.appendChild(node);
     });
@@ -391,11 +391,6 @@ function setMovementType(type) {
   els.reasonInput.required = type === "outbound";
   els.detailInput.required = type === "outbound";
   els.movementSnInput.placeholder = type === "outbound" ? "填写本次出库的SN，一行一个" : "填写本次入库新增的SN，一行一个";
-  if (type === "inbound") {
-    state.selectedSn = [];
-    els.movementSnInput.value = "";
-    renderDetail();
-  }
   els.formStatus.textContent = "";
   els.formStatus.className = "formStatus";
 }
@@ -650,19 +645,10 @@ function snQrUrl(item, sn) {
   return url.toString();
 }
 
-function formatLabelNumber(value) {
-  return Number.isFinite(Number(value)) ? String(Number(value)) : "0";
-}
-
 function qrLabelLines(item, sn = "") {
-  return [
-    `编号：${item.code || "未设置"}`,
-    sn ? `SN：${sn}` : "SN：-",
-    `库存：${formatLabelNumber(item.stock)}${item.unit ? ` ${item.unit}` : ""}`,
-    `负责人：${item.owner || "-"}`,
-    `分类：${item.category || "-"}`,
-    `备注：${item.note || "-"}`
-  ];
+  const lines = [`编号：${item.code || "未设置"}`];
+  if (sn) lines.push(`SN：${sn}`);
+  return lines;
 }
 
 function renderQrLabels() {
