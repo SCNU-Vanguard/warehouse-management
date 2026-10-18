@@ -86,8 +86,11 @@ async function createMovement(env, type, payload) {
     throw new Error("reason and detail are required for outbound movements");
   }
 
-  const item = await findItem(env, { code, recordId });
+  const items = await getItems(env);
+  const item = (recordId && items.find((entry) => entry.recordId === recordId))
+    || (code && items.find((entry) => itemMatchesCode(entry, code)));
   if (!item) throw new Error("item not found");
+  if (type === "inbound" && snLines.length > 0) ensureSnNotUsedByOtherItems(items, item, snLines);
 
   const currentStock = Number(item.stock || 0);
   if (type === "outbound" && quantity > currentStock) {
@@ -98,13 +101,18 @@ async function createMovement(env, type, payload) {
   const fields = fieldNames(env);
   const currentSnLines = availableSnLines(item);
   const nextSnLines = nextInventorySnLines(type, currentSnLines, snLines, quantity);
+  const useSnStatus = sourceUsesSnStatus(item);
+  if (useSnStatus && snLines.length > 0) {
+    if (sourceIsSheet(env, item)) {
+      await updateSheetSnStatus(env, item, snLines, type === "outbound" ? "是" : "否", fields);
+    } else {
+      await updateBitableSnStatus(env, item, snLines, type === "outbound" ? "是" : "否", fields);
+    }
+  }
   await updateInventoryRow(env, item, {
     ...stockUpdateFields(env, type, item, quantity, nextStock, fields),
-    ...(sourceIsSheet(env, item) ? {} : (shouldUpdateSn(type, snLines, currentSnLines) ? { [fields.sn]: nextSnLines.join("\n") } : {}))
+    ...(useSnStatus ? {} : (shouldUpdateSn(type, snLines, currentSnLines) ? { [fields.sn]: nextSnLines.join("\n") } : {}))
   });
-  if (sourceIsSheet(env, item) && snLines.length > 0) {
-    await updateSheetSnStatus(env, item, snLines, type === "outbound" ? "是" : "否", fields);
-  }
 
   let recordWarning = "";
   if (env.FEISHU_RECORDS_TABLE_ID) {
@@ -128,7 +136,7 @@ async function updateItemProfile(env, payload) {
   if (!code && !recordId) throw new Error("code or recordId is required");
 
   const items = await getItems(env);
-  const item = items.find((entry) => (recordId && entry.recordId === recordId) || (code && entry.code === code));
+  const item = items.find((entry) => (recordId && entry.recordId === recordId) || (code && itemMatchesCode(entry, code)));
   if (!item) throw new Error("item not found");
 
   const fields = fieldNames(env);
@@ -154,21 +162,36 @@ async function updateItemProfile(env, payload) {
     }
   });
 
+  let groupedSnUpdate = null;
   if (Object.prototype.hasOwnProperty.call(payload, "sn")) {
     const snLines = parseSnPayload(payload.sn);
     ensureUniqueSnLines(snLines);
     ensureSnNotUsedByOtherItems(items, item, snLines);
     const nextSn = snLines.join("\n");
     if (nextSn !== String(item.sn || "")) {
-      if (!availableFields.has(fields.sn)) throw new Error(`Feishu field not found: ${fields.sn}`);
-      updates[fields.sn] = nextSn;
+      if (sourceUsesSnStatus(item)) {
+        groupedSnUpdate = snLines;
+      } else {
+        if (!availableFields.has(fields.sn)) throw new Error(`Feishu field not found: ${fields.sn}`);
+        updates[fields.sn] = nextSn;
+      }
     }
   }
 
-  if (Object.keys(updates).length === 0) return { item, skippedFields };
+  if (Object.keys(updates).length === 0 && groupedSnUpdate === null) return { item, skippedFields };
 
-  await updateInventoryRow(env, item, updates);
-  return { item: { ...item, ...profilePatchFromUpdates(fields, updates) }, skippedFields };
+  if (Object.keys(updates).length > 0) await updateInventoryRow(env, item, updates);
+  let groupedSnResult = null;
+  if (groupedSnUpdate !== null) {
+    const snTargetItem = { ...item, ...profilePatchFromUpdates(fields, updates) };
+    groupedSnResult = await updateGroupedSn(env, snTargetItem, groupedSnUpdate, fields);
+  }
+  const nextItem = { ...item, ...profilePatchFromUpdates(fields, updates) };
+  if (groupedSnResult) {
+    nextItem.sn = groupedSnResult.sn.join("\n");
+    nextItem.availableSn = groupedSnResult.availableSn;
+  }
+  return { item: nextItem, skippedFields };
 }
 
 async function getInventoryFieldNameSet(env, item) {
@@ -187,7 +210,7 @@ function ensureSnNotUsedByOtherItems(items, currentItem, snLines) {
   for (const item of items) {
     const sameItem = currentItem.recordId
       ? item.recordId === currentItem.recordId
-      : item.code === currentItem.code;
+      : itemMatchesCode(item, currentItem.code);
     if (sameItem) continue;
     const duplicate = splitSnLines(item.sn).find((sn) => wanted.has(normalizeSnLine(sn)));
     if (duplicate) throw new Error(`SN already used by another item: ${duplicate}`);
@@ -322,7 +345,7 @@ async function getItems(env) {
   const tableId = env.FEISHU_ITEMS_TABLE_ID || source.tableId;
   if (!tableId) throw new Error("Missing environment variable: FEISHU_ITEMS_TABLE_ID");
   const rows = await listBitableRecords(env, source.token, tableId);
-  return rows.map((row) => normalizeItem(row, fields));
+  return normalizeBitableItems(rows, fields);
 }
 
 async function getRecords(env) {
@@ -342,14 +365,24 @@ async function findItemByCode(env, code) {
 
 async function findItem(env, { code = "", recordId = "" }) {
   const items = await getItems(env);
-  return items.find((item) => (recordId && item.recordId === recordId) || (code && item.code === code)) || null;
+  return (recordId && items.find((item) => item.recordId === recordId))
+    || (code && items.find((item) => itemMatchesCode(item, code)))
+    || null;
+}
+
+function itemMatchesCode(item, code) {
+  const wanted = String(code || "").trim();
+  if (!wanted) return false;
+  return item.code === wanted || (Array.isArray(item.codes) && item.codes.includes(wanted));
 }
 
 function normalizeItem(row, fields) {
   const data = row.fields || {};
+  const code = textValue(data[fields.code]);
   return {
     recordId: row.record_id,
-    code: textValue(data[fields.code]),
+    code,
+    codes: code ? [code] : [],
     name: textValue(data[fields.name]),
     sn: textValue(data[fields.sn]),
     inStock: textValue(data[fields.inStock]),
@@ -378,29 +411,120 @@ function availableSnLines(item) {
 }
 
 function sourceIsSheet(env, item) {
-  return Array.isArray(item.meta?.sourceRows);
+  return item.meta?.sourceType === "sheet";
+}
+
+function sourceIsGrouped(item) {
+  return item.meta?.grouped === true;
+}
+
+function sourceUsesSnStatus(item) {
+  return sourceIsGrouped(item) || item.meta?.sourceType === "bitable";
 }
 
 // Sheets are commonly maintained in either of two forms: one row per item
-// with newline-separated SNs, or one row per physical item. Collapse the
-// latter here so the rest of the inventory code keeps one item per category.
+// with newline-separated SNs, or one row per physical item. In the latter
+// form the category name is written only on the first row while child rows
+// contain the code and SN. Use the category name as the identity and carry
+// it through the child rows; a category may contain more than one code.
 function normalizeSheetItems(rows, fields) {
+  return normalizeGroupedItems(rows, fields, "sheet");
+}
+
+function normalizeBitableItems(rows, fields) {
+  return normalizeGroupedItems(rows, fields, "bitable");
+}
+
+function normalizeGroupedItems(rows, fields, sourceType) {
   const items = [];
   const byKey = new Map();
+  const rowsById = new Map(rows.filter((row) => row.record_id).map((row) => [String(row.record_id), row]));
+  const rowsByName = new Map();
+  const linkedParentIds = new Set();
+
+  rows.forEach((row) => {
+    const name = textValue((row.fields || {})[fields.name]).trim();
+    if (name && !rowsByName.has(normalizeGroupKey(name))) rowsByName.set(normalizeGroupKey(name), row);
+  });
+  rows.forEach((row) => {
+    if (sourceType === "bitable") {
+      const relation = relationInfo((row.fields || {})[fields.parent], rowsById);
+      relation.recordIds.forEach((recordId) => linkedParentIds.add(recordId));
+      relation.labels.forEach((label) => {
+        const parentRow = rowsByName.get(normalizeGroupKey(label));
+        if (parentRow?.record_id) linkedParentIds.add(String(parentRow.record_id));
+      });
+    }
+  });
+
+  let activeName = "";
 
   rows.forEach((row) => {
     const item = normalizeItem(row, fields);
-    if (!item.code && !item.name) return;
+    const rowFields = row.fields || {};
+    const relation = sourceType === "bitable" ? relationInfo(rowFields[fields.parent], rowsById) : { recordIds: [], labels: [] };
+    const hasParent = relation.recordIds.length > 0 || relation.labels.length > 0;
+    const parentRecordId = relation.recordIds.find((recordId) => rowsById.has(recordId)) || relation.recordIds[0] || "";
+    const parentRow = parentRecordId ? resolveRootRow(parentRecordId, rowsById, fields) : null;
+    const parentLabel = parentRow
+      ? rowCategoryName(parentRow, rowsById, fields)
+      : relation.labels[0] || "";
+    const namedParentRow = parentLabel ? rowsByName.get(normalizeGroupKey(parentLabel)) : null;
+    const rootRow = parentRow || namedParentRow || (!hasParent ? row : null);
+    const categoryName = sourceType === "sheet"
+      ? item.name || activeName
+      : hasParent
+        ? parentLabel || item.name
+        : item.name;
 
-    const key = item.code ? `code:${item.code}` : `name:${item.name}`;
+    if (sourceType === "sheet" && !item.code && !item.name && !item.sn) {
+      activeName = "";
+      return;
+    }
+    if (!item.code && !item.name && !item.sn && !categoryName) {
+      return;
+    }
+
+    if (item.name) activeName = item.name;
+    // Use the linked parent record as identity. Names and product codes are
+    // labels here: neither is guaranteed to map one-to-one to a category.
+    const rowRecordId = String(row.record_id || "");
+    const hasLinkedGroup = hasParent || linkedParentIds.has(rowRecordId);
+    const rootRecordId = String(rootRow?.record_id || (hasLinkedGroup ? parentRecordId : row.record_id) || "");
+    const key = sourceType === "sheet"
+      ? categoryName
+        ? `name:${normalizeGroupKey(categoryName)}`
+        : item.code
+          ? `code:${normalizeGroupKey(item.code)}`
+          : `record:${row.record_id || items.length}`
+      : hasLinkedGroup && rootRecordId
+        ? `record:${rootRecordId}`
+        : `record:${row.record_id || items.length}`;
+    const primaryItem = rootRow ? normalizeItem(rootRow, fields) : item;
+    const primaryRowNumber = sourceType === "sheet"
+      ? (item.name ? item.meta?.rowNumber : null)
+      : rootRow?.meta?.rowNumber || null;
+    const primaryRecordId = sourceType === "bitable"
+      ? String(rootRecordId || row.record_id || "")
+      : "";
+    const grouped = sourceType === "sheet" || hasLinkedGroup;
     const existing = byKey.get(key);
     if (!existing) {
       const normalized = {
         ...item,
+        recordId: primaryRecordId || row.record_id,
+        code: primaryItem.code || item.code,
+        codes: [...new Set([primaryItem.code, item.code].filter(Boolean))],
+        name: categoryName,
         availableSn: rowAvailableSn(item),
         meta: {
           ...(item.meta || {}),
           rowNumbers: [item.meta?.rowNumber].filter(Boolean),
+          primaryRowNumber,
+          primaryRecordId,
+          fallbackRecordId: row.record_id || "",
+          grouped,
+          sourceType,
           sourceRows: [row],
           sourceToken: row.meta?.sourceToken || "",
           sheetId: row.meta?.sheetId || ""
@@ -410,6 +534,17 @@ function normalizeSheetItems(rows, fields) {
       items.push(normalized);
       return;
     }
+
+    if (!existing.name && categoryName) existing.name = categoryName;
+    if (primaryItem.code && !existing.meta.primaryRecordId) existing.code = primaryItem.code;
+    if (!existing.code && item.code) existing.code = item.code;
+    if (item.code && !existing.codes.includes(item.code)) existing.codes.push(item.code);
+    if (primaryRecordId && !existing.meta.primaryRecordId) {
+      existing.recordId = primaryRecordId;
+      existing.meta.primaryRowNumber = primaryRowNumber;
+      existing.meta.primaryRecordId = primaryRecordId;
+    }
+    existing.meta.grouped ||= grouped;
 
     const currentSn = splitSnLines(existing.sn);
     const nextSn = splitSnLines(item.sn);
@@ -442,6 +577,70 @@ function mergeSheetNumber(current, next, sourceRows, fieldName) {
   // Repeated totals are usually copied down the sheet; keep one value.
   if (values.length > 1 && values.every((value) => value === values[0])) return values[0];
   return current + next;
+}
+
+function normalizeGroupKey(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function relationInfo(value, rowsById) {
+  const recordIds = [];
+  const labels = [];
+  const addId = (entry) => {
+    if (entry == null || entry === "") return;
+    const id = String(entry).trim();
+    if (id && !recordIds.includes(id)) recordIds.push(id);
+  };
+  const addLabel = (entry) => {
+    if (entry == null || entry === "") return;
+    const label = String(entry).trim();
+    if (label && !rowsById.has(label) && !labels.includes(label)) labels.push(label);
+  };
+  const visit = (entry) => {
+    if (Array.isArray(entry)) {
+      entry.forEach(visit);
+      return;
+    }
+    if (entry == null || entry === "") return;
+    if (typeof entry === "string" || typeof entry === "number") {
+      const text = String(entry).trim();
+      if (rowsById.has(text)) addId(text);
+      else addLabel(text);
+      return;
+    }
+    if (typeof entry !== "object") return;
+
+    const rawIds = [entry.record_id, entry.recordId, entry.record_ids, entry.recordIds, entry.link_record_ids, entry.linkRecordIds];
+    rawIds.flatMap((ids) => Array.isArray(ids) ? ids : [ids]).forEach(addId);
+    [entry.text, entry.name, entry.title, entry.display_name, entry.displayName].forEach(addLabel);
+    if (entry.value != null) visit(entry.value);
+  };
+
+  visit(value);
+  return { recordIds, labels };
+}
+
+function resolveRootRow(recordId, rowsById, fields, visited = new Set()) {
+  if (!recordId || visited.has(recordId)) return null;
+  visited.add(recordId);
+  const row = rowsById.get(recordId);
+  if (!row) return null;
+  const parentInfo = relationInfo((row.fields || {})[fields.parent], rowsById);
+  const parentId = parentInfo.recordIds.find((id) => rowsById.has(id) && id !== recordId);
+  return parentId ? resolveRootRow(parentId, rowsById, fields, visited) || row : row;
+}
+
+function rowCategoryName(row, rowsById, fields, visited = new Set()) {
+  const recordId = String(row.record_id || "");
+  if (recordId && visited.has(recordId)) return "";
+  if (recordId) visited.add(recordId);
+  const data = row.fields || {};
+  const name = textValue(data[fields.name]);
+  if (name) return name;
+  const relation = relationInfo(data[fields.parent], rowsById);
+  const parentId = relation.recordIds.find((id) => rowsById.has(id));
+  const parentRow = parentId ? rowsById.get(parentId) : null;
+  return parentRow ? rowCategoryName(parentRow, rowsById, fields, visited) : relation.labels[0] || "";
 }
 
 function normalizeMovement(row, fields) {
@@ -480,7 +679,8 @@ async function updateInventoryRow(env, item, fields) {
     return updateSheetRow(env, source, item, fields);
   }
 
-  return updateBitableRecord(env, source.token, env.FEISHU_ITEMS_TABLE_ID || source.tableId, item.recordId, fields);
+  const recordId = item.meta?.primaryRecordId || item.meta?.fallbackRecordId || item.recordId;
+  return updateBitableRecord(env, source.token, env.FEISHU_ITEMS_TABLE_ID || source.tableId, recordId, fields);
 }
 
 async function createMovementRecord(env, fields) {
@@ -496,7 +696,16 @@ async function listBitableRecords(env, appToken, tableId) {
     const params = new URLSearchParams({ page_size: "500" });
     if (pageToken) params.set("page_token", pageToken);
     const result = await feishu(env, `/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records?${params}`);
-    records.push(...(result.data?.items || []));
+    const items = result.data?.items || [];
+    records.push(...items.map((row) => ({
+      ...row,
+      meta: {
+        ...(row.meta || {}),
+        sourceType: "bitable",
+        sourceToken: appToken,
+        tableId
+      }
+    })));
     pageToken = result.data?.has_more ? result.data.page_token : "";
   } while (pageToken);
   return records;
@@ -585,7 +794,7 @@ async function listSheetRows(env, source) {
 async function updateSheetRow(env, source, item, fields) {
   const headers = item.meta?.headers || [];
   const rowNumbers = item.meta?.rowNumbers || [item.meta?.rowNumber];
-  const rowNumber = rowNumbers.find(Boolean);
+  const rowNumber = item.meta?.primaryRowNumber || rowNumbers.find(Boolean);
   if (!rowNumber) throw new Error("sheet row number not found");
 
   for (const [fieldName, value] of Object.entries(fields)) {
@@ -609,6 +818,45 @@ async function updateSheetRow(env, source, item, fields) {
   }
 }
 
+async function updateSheetCells(env, source, headers, rowNumber, fields) {
+  for (const [fieldName, value] of Object.entries(fields)) {
+    const columnIndex = headers.indexOf(fieldName);
+    if (columnIndex < 0) throw new Error(`sheet field not found: ${fieldName}`);
+    const columnName = columnLetters(columnIndex + 1);
+    await feishu(env, `/open-apis/sheets/v2/spreadsheets/${source.token}/values`, {
+      method: "PUT",
+      body: JSON.stringify({
+        valueRange: {
+          range: `${source.sheetId}!${columnName}${rowNumber}:${columnName}${rowNumber}`,
+          values: [[value]]
+        }
+      })
+    });
+  }
+}
+
+async function appendSheetSnRow(env, source, item, sn, fields) {
+  const headers = item.meta?.headers || [];
+  const values = headers.map((header) => {
+    if (header === fields.name) return item.name || "";
+    if (header === fields.code) return item.code || "";
+    if (header === fields.sn) return sn;
+    if (header === fields.inStock) return "否";
+    return "";
+  });
+  const lastColumn = columnLetters(headers.length);
+  if (!lastColumn) throw new Error("sheet headers not found");
+  await feishu(env, `/open-apis/sheets/v2/spreadsheets/${source.token}/values_append?insertDataOption=INSERT_ROWS`, {
+    method: "POST",
+    body: JSON.stringify({
+      valueRange: {
+        range: `${source.sheetId}!A1:${lastColumn}1`,
+        values: [values]
+      }
+    })
+  });
+}
+
 async function updateSheetSnStatus(env, item, snLines, status, fields) {
   const headers = item.meta?.headers || [];
   const columnIndex = headers.indexOf(fields.inStock);
@@ -616,14 +864,234 @@ async function updateSheetSnStatus(env, item, snLines, status, fields) {
   const columnName = columnLetters(columnIndex + 1);
   const wanted = new Set(snLines.map(normalizeSnLine));
   const rows = item.meta?.sourceRows || [];
-  for (const row of rows) {
+  const matchingRows = rows.filter((row) => {
     const rowSn = splitSnLines(textValue((row.fields || {})[fields.sn]));
-    if (!rowSn.some((sn) => wanted.has(normalizeSnLine(sn)))) continue;
+    return rowSn.some((sn) => wanted.has(normalizeSnLine(sn)));
+  });
+  if (matchingRows.some((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length > 1)) {
+    throw new Error("请先将一行多个 SN 拆分为每行一个，再办理出入库");
+  }
+  const found = new Set();
+  for (const row of matchingRows) {
+    const rowSn = splitSnLines(textValue((row.fields || {})[fields.sn]));
+    rowSn.filter((sn) => wanted.has(normalizeSnLine(sn))).forEach((sn) => found.add(normalizeSnLine(sn)));
     await feishu(env, `/open-apis/sheets/v2/spreadsheets/${item.meta.sourceToken}/values`, {
       method: "PUT",
       body: JSON.stringify({ valueRange: { range: `${item.meta.sheetId}!${columnName}${row.meta.rowNumber}:${columnName}${row.meta.rowNumber}`, values: [[status]] } })
     });
   }
+  const missing = snLines.filter((sn) => !found.has(normalizeSnLine(sn)));
+  if (missing.length > 0 && status === "否") {
+    const emptyRows = snCandidateRows(item, fields.sn).filter((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length === 0);
+    const source = await getDataSource(env);
+    for (const sn of missing) {
+      const emptyRow = emptyRows.shift();
+      if (emptyRow) {
+        await updateSheetCells(env, source, headers, emptyRow.meta.rowNumber, {
+          [fields.sn]: sn,
+          [fields.inStock]: status
+        });
+      } else {
+        await appendSheetSnRow(env, source, item, sn, fields);
+      }
+    }
+  } else if (missing.length > 0) {
+    throw new Error(`SN not found in inventory: ${missing[0]}`);
+  }
+}
+
+async function updateBitableSnStatus(env, item, snLines, status, fields) {
+  const source = await getDataSource(env);
+  const tableId = env.FEISHU_ITEMS_TABLE_ID || source.tableId;
+  const wanted = new Set(snLines.map(normalizeSnLine));
+  const matchingRows = (item.meta?.sourceRows || []).filter((row) => {
+    const rowSn = splitSnLines(textValue((row.fields || {})[fields.sn]));
+    return rowSn.some((sn) => wanted.has(normalizeSnLine(sn)));
+  });
+  if (matchingRows.some((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length > 1)) {
+    throw new Error("请先将一行多个 SN 拆分为每行一个，再办理出入库");
+  }
+  const missing = snLines.filter((sn) => !matchingRows.some((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).some((entry) => sameSnLine(entry, sn))));
+  if (missing.length > 0 && status !== "否") throw new Error(`SN not found in inventory: ${missing[0]}`);
+
+  const parentRecordId = item.meta?.primaryRecordId || item.recordId;
+  if (missing.length > 0 && !parentRecordId) throw new Error("parent record not found; cannot create SN rows");
+  const emptyRows = snCandidateRows(item, fields.sn).filter((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length === 0);
+  for (const sn of missing) {
+    const emptyRow = emptyRows.shift();
+    if (emptyRow) {
+      await updateBitableRecord(env, source.token, tableId, emptyRow.record_id, {
+        [fields.sn]: sn,
+        [fields.inStock]: status
+      });
+    } else {
+      await createBitableRecord(env, source.token, tableId, {
+        [fields.code]: item.code || "",
+        [fields.sn]: sn,
+        [fields.inStock]: status,
+        [fields.parent]: [parentRecordId]
+      });
+    }
+  }
+
+  const updated = new Set();
+  for (const row of matchingRows) {
+    const recordId = String(row.record_id || "");
+    if (!recordId || updated.has(recordId)) continue;
+    updated.add(recordId);
+    await updateBitableRecord(env, source.token, tableId, recordId, { [fields.inStock]: status });
+  }
+}
+
+async function updateGroupedSn(env, item, desiredSn, fields) {
+  const source = await getDataSource(env);
+  if (source.type === "sheet") {
+    return updateSheetGroupedSn(env, item, desiredSn, fields);
+  }
+
+  const tableId = env.FEISHU_ITEMS_TABLE_ID || source.tableId;
+  const parentRecordId = item.meta?.primaryRecordId || item.recordId;
+  const rowsWithSn = snCandidateRows(item, fields.sn).map((row) => ({
+    row,
+    sn: splitSnLines(textValue((row.fields || {})[fields.sn]))
+  }));
+  if (rowsWithSn.some((entry) => entry.sn.length > 1)) {
+    const existing = rowsWithSn.flatMap((entry) => entry.sn);
+    if (sameSnCollection(existing, desiredSn)) {
+      return { sn: desiredSn, availableSn: availableSnLines(item) };
+    }
+    throw new Error("请先将一行多个 SN 拆分为每行一个，再通过网页维护 SN");
+  }
+
+  const desiredKeys = new Set(desiredSn.map(normalizeSnLine));
+  const removedUsed = rowsWithSn
+    .flatMap((entry) => entry.sn.map((sn) => ({ sn, row: entry.row })))
+    .find((entry) => !desiredKeys.has(normalizeSnLine(entry.sn)) && !isInStockValue(textValue((entry.row.fields || {})[fields.inStock])));
+  if (removedUsed) throw new Error(`SN 已出库，不能从网页删除：${removedUsed.sn}`);
+
+  const remaining = [...rowsWithSn];
+  const retained = new Map();
+  for (const sn of desiredSn) {
+    const matchIndex = remaining.findIndex((entry) => sameSnLine(entry.sn[0], sn));
+    if (matchIndex >= 0) {
+      const [match] = remaining.splice(matchIndex, 1);
+      retained.set(normalizeSnLine(sn), isInStockValue(textValue((match.row.fields || {})[fields.inStock])));
+      continue;
+    }
+    const reusableIndex = remaining.findIndex((entry) => entry.sn.length === 0 || isInStockValue(textValue((entry.row.fields || {})[fields.inStock])));
+    const reusableRow = reusableIndex >= 0 ? remaining.splice(reusableIndex, 1)[0] : null;
+    if (reusableRow) {
+      await updateBitableRecord(env, source.token, tableId, reusableRow.row.record_id, {
+        [fields.sn]: sn,
+        [fields.inStock]: "否"
+      });
+    } else {
+      if (!parentRecordId) throw new Error("parent record not found; cannot create SN rows");
+      await createBitableRecord(env, source.token, tableId, {
+        [fields.code]: item.code || "",
+        [fields.sn]: sn,
+        [fields.inStock]: "否",
+        [fields.parent]: [parentRecordId]
+      });
+    }
+    retained.set(normalizeSnLine(sn), true);
+  }
+
+  for (const entry of remaining) {
+    if (entry.sn.length === 0) continue;
+    await updateBitableRecord(env, source.token, tableId, entry.row.record_id, {
+      [fields.sn]: "",
+      [fields.inStock]: "否"
+    });
+  }
+  return {
+    sn: desiredSn,
+    availableSn: desiredSn.filter((sn) => retained.get(normalizeSnLine(sn)) !== false)
+  };
+}
+
+async function updateSheetGroupedSn(env, item, desiredSn, fields) {
+  const source = await getDataSource(env);
+  const rowsWithSn = snCandidateRows(item, fields.sn).map((row) => ({
+    row,
+    sn: splitSnLines(textValue((row.fields || {})[fields.sn]))
+  }));
+  if (rowsWithSn.some((entry) => entry.sn.length > 1)) {
+    const existing = rowsWithSn.flatMap((entry) => entry.sn);
+    if (sameSnCollection(existing, desiredSn)) {
+      return { sn: desiredSn, availableSn: availableSnLines(item) };
+    }
+    throw new Error("请先将一行多个 SN 拆分为每行一个，再通过网页维护 SN");
+  }
+
+  const desiredKeys = new Set(desiredSn.map(normalizeSnLine));
+  const removedUsed = rowsWithSn
+    .flatMap((entry) => entry.sn.map((sn) => ({ sn, row: entry.row })))
+    .find((entry) => !desiredKeys.has(normalizeSnLine(entry.sn)) && !isInStockValue(textValue((entry.row.fields || {})[fields.inStock])));
+  if (removedUsed) throw new Error(`SN 已出库，不能从网页删除：${removedUsed.sn}`);
+
+  const headers = item.meta?.headers || [];
+  const remaining = [...rowsWithSn];
+  const retained = new Map();
+  for (const sn of desiredSn) {
+    const matchIndex = remaining.findIndex((entry) => sameSnLine(entry.sn[0], sn));
+    if (matchIndex >= 0) {
+      const [match] = remaining.splice(matchIndex, 1);
+      retained.set(normalizeSnLine(sn), isInStockValue(textValue((match.row.fields || {})[fields.inStock])));
+      continue;
+    }
+
+    const reusableIndex = remaining.findIndex((entry) => entry.sn.length === 0 || isInStockValue(textValue((entry.row.fields || {})[fields.inStock])));
+    const reusableRow = reusableIndex >= 0 ? remaining.splice(reusableIndex, 1)[0] : null;
+    if (reusableRow) {
+      await updateSheetCells(env, source, headers, reusableRow.row.meta.rowNumber, {
+        [fields.sn]: sn,
+        [fields.inStock]: "否"
+      });
+    } else {
+      await appendSheetSnRow(env, source, item, sn, fields);
+    }
+    retained.set(normalizeSnLine(sn), true);
+  }
+
+  for (const entry of remaining) {
+    if (entry.sn.length === 0) continue;
+    await updateSheetCells(env, source, headers, entry.row.meta.rowNumber, {
+      [fields.sn]: "",
+      [fields.inStock]: "否"
+    });
+  }
+  return {
+    sn: desiredSn,
+    availableSn: desiredSn.filter((sn) => retained.get(normalizeSnLine(sn)) !== false)
+  };
+}
+
+function snCandidateRows(item, snField) {
+  const rows = item.meta?.sourceRows || [];
+  const primaryId = String(item.meta?.primaryRecordId || "");
+  const primaryRowNumber = String(item.meta?.primaryRowNumber || "");
+  const childRows = rows.filter((row) => {
+    const rowId = String(row.record_id || "");
+    const rowNumber = String(row.meta?.rowNumber || "");
+    return !(primaryId && rowId === primaryId) && !(primaryRowNumber && rowNumber === primaryRowNumber);
+  });
+  const primaryRowsWithSn = rows.filter((row) => {
+    const rowId = String(row.record_id || "");
+    const rowNumber = String(row.meta?.rowNumber || "");
+    const isPrimary = (primaryId && rowId === primaryId) || (primaryRowNumber && rowNumber === primaryRowNumber);
+    return isPrimary && splitSnLines(textValue((row.fields || {})[snField])).length > 0;
+  });
+  return [...childRows, ...primaryRowsWithSn];
+}
+
+function sameSnCollection(current, desired) {
+  const currentKeys = current.map(normalizeSnLine);
+  const desiredKeys = desired.map(normalizeSnLine);
+  return currentKeys.length === desiredKeys.length
+    && new Set(currentKeys).size === currentKeys.length
+    && new Set(desiredKeys).size === desiredKeys.length
+    && currentKeys.every((key) => desiredKeys.includes(key));
 }
 
 async function getDataSource(env) {
@@ -721,6 +1189,7 @@ function fieldNames(env) {
   return {
     code: env.FIELD_CODE || "货物编号",
     name: env.FIELD_NAME || "货品",
+    parent: env.FIELD_PARENT || "父记录",
     stock: env.FIELD_STOCK || "现有库存数量",
     sn: env.FIELD_SN || "SN码",
     inStock: env.FIELD_IN_STOCK || "是否被使用",

@@ -11,6 +11,7 @@ ALLOWED_ORIGIN = "https://scnu-vanguard.github.io"
 
 FIELD_CODE = "货物编号"
 FIELD_NAME = "货品"
+FIELD_PARENT = "父记录"
 FIELD_STOCK = "现有库存数量"
 FIELD_SN = "SN码"
 FIELD_IN_STOCK = "是否被使用"

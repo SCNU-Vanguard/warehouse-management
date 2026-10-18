@@ -180,7 +180,8 @@ function renderItems() {
 
   state.items
     .filter((item) => {
-      const haystack = `${item.code} ${item.name} ${item.sn || ""} ${item.owner || ""} ${item.note || ""}`.toLowerCase();
+      const itemCodes = Array.isArray(item.codes) ? item.codes.join(" ") : "";
+      const haystack = `${item.code} ${itemCodes} ${item.name} ${item.sn || ""} ${item.owner || ""} ${item.note || ""}`.toLowerCase();
       return haystack.includes(query);
     })
     .forEach((item) => {
@@ -188,7 +189,7 @@ function renderItems() {
       node.dataset.key = itemKey(item);
       node.classList.toggle("active", isSelectedItem(item));
       node.querySelector(".itemName").textContent = item.name;
-      node.querySelector(".itemCode").textContent = item.code || "未设置货物编号";
+      node.querySelector(".itemCode").textContent = itemCodeLabel(item);
       node.querySelector(".itemQty").textContent = `${Number(item.stock || 0)}/${Number(item.inboundTotal || 0)}`;
       node.querySelector(".itemSnCount").textContent = splitLines(item.sn).length ? `${splitLines(item.sn).length} 个 SN` : "无 SN";
       node.addEventListener("click", () => selectItem(item));
@@ -202,7 +203,7 @@ function renderDetail() {
   els.detailPane.classList.toggle("is-empty", !item);
   if (!item) return;
 
-  els.detailCode.textContent = item.code;
+  els.detailCode.textContent = itemCodeLabel(item);
   els.detailName.textContent = item.name;
   els.detailStock.textContent = item.stock;
   els.detailOutbound.textContent = item.outboundTotal || 0;
@@ -317,7 +318,7 @@ function renderChart() {
 function selectItem(itemOrCode) {
   const item = typeof itemOrCode === "object"
     ? itemOrCode
-    : state.items.find((entry) => entry.code === itemOrCode);
+    : state.items.find((entry) => itemHasCode(entry, itemOrCode));
   if (!item) {
     setStatus(`未找到物资：${itemOrCode}`, true);
     return;
@@ -339,7 +340,7 @@ function getSelectedItem() {
   if (state.selectedKey.startsWith("code:")) {
     const code = state.selectedKey.slice("code:".length);
     if (!code) return null;
-    return state.items.find((item) => item.code === code) || null;
+    return state.items.find((item) => itemHasCode(item, code)) || null;
   }
   return state.items.find((item) => itemKey(item) === state.selectedKey) || null;
 }
@@ -352,9 +353,21 @@ function isSelectedItem(item) {
   if (!state.selectedKey) return false;
   if (state.selectedKey.startsWith("code:")) {
     const code = state.selectedKey.slice("code:".length);
-    return Boolean(code) && item.code === code;
+    return Boolean(code) && itemHasCode(item, code);
   }
   return itemKey(item) === state.selectedKey;
+}
+
+function itemHasCode(item, code) {
+  const wanted = String(code || "").trim();
+  if (!wanted) return false;
+  return item.code === wanted || (Array.isArray(item.codes) && item.codes.includes(wanted));
+}
+
+function itemCodeLabel(item) {
+  if (!item.code) return "未设置货物编号";
+  const count = Array.isArray(item.codes) ? new Set(item.codes.filter(Boolean)).size : 0;
+  return count > 1 ? `${item.code} 等 ${count} 个编号` : item.code;
 }
 
 function splitLines(value) {
@@ -590,7 +603,7 @@ function findDeepLinkItem(link) {
     if (byRecordId) return byRecordId;
   }
   if (link.code) {
-    const byCode = state.items.find((item) => item.code === link.code);
+    const byCode = state.items.find((item) => itemHasCode(item, link.code));
     if (byCode) return byCode;
   }
   if (link.snLines.length > 0) {
@@ -768,7 +781,7 @@ async function submitItemEdit(event) {
       await loadData();
       const updated = payload.recordId
         ? state.items.find((entry) => entry.recordId === payload.recordId)
-        : state.items.find((entry) => entry.code === payload.nextCode);
+        : state.items.find((entry) => itemHasCode(entry, payload.nextCode));
       if (updated) selectItem(updated);
     } else {
       Object.assign(item, {
