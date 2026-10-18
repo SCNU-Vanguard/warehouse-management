@@ -36,6 +36,12 @@ export default {
         return json({ ok: true, ...result }, env, request);
       }
 
+      if (request.method === "POST" && path === "/api/items/create") {
+        const payload = await readJson(request);
+        const result = await createInventoryItem(env, payload);
+        return json({ ok: true, ...result }, env, request);
+      }
+
       if (request.method === "GET" && path === "/api/records") {
         const records = await getRecords(env);
         return json({ ok: true, records }, env, request);
@@ -87,9 +93,15 @@ async function createMovement(env, type, payload) {
   }
 
   const items = await getItems(env);
-  const item = (recordId && items.find((entry) => entry.recordId === recordId))
-    || (code && items.find((entry) => itemMatchesCode(entry, code)));
+  const recordItem = recordId && items.find((entry) => entry.recordId === recordId);
+  const codeItem = code && items.find((entry) => itemMatchesCode(entry, code));
+  if (recordItem && code && !itemMatchesCode(recordItem, code)) {
+    throw new Error(`货物编号不属于所选物资：${code}`);
+  }
+  let item = recordItem || codeItem;
   if (!item) throw new Error("item not found");
+  const fields = fieldNames(env);
+  item = await splitLegacySnRows(env, item, fields);
   if (type === "inbound" && snLines.length > 0) ensureSnNotUsedByOtherItems(items, item, snLines);
 
   const currentStock = Number(item.stock || 0);
@@ -97,22 +109,57 @@ async function createMovement(env, type, payload) {
     throw new Error("outbound quantity exceeds current stock");
   }
 
-  const nextStock = type === "inbound" ? currentStock + quantity : currentStock - quantity;
-  const fields = fieldNames(env);
+  const allSnLines = splitSnLines(item.sn);
   const currentSnLines = availableSnLines(item);
-  const nextSnLines = nextInventorySnLines(type, currentSnLines, snLines, quantity);
+  if (type === "inbound") {
+    const duplicate = snLines.find((sn) => allSnLines.some((existing) => sameSnLine(existing, sn)));
+    if (duplicate) throw new Error(`SN 已登记过，不能重复入库：${duplicate}`);
+  }
+  if (allSnLines.length > 0 && currentSnLines.length !== currentStock) {
+    throw new Error(`当前库存数量（${currentStock}）与在库 SN 数量（${currentSnLines.length}）不一致，请先在编辑信息中校正 SN`);
+  }
+  if (type === "inbound" && allSnLines.length === 0 && currentStock > 0 && snLines.length > 0) {
+    throw new Error("该物资已有无 SN 库存；请先在编辑信息中为现有库存补齐全部 SN，再继续入库");
+  }
+
+  const nextStock = type === "inbound" ? currentStock + quantity : currentStock - quantity;
+  const serialTracked = allSnLines.length > 0 || snLines.length > 0;
+  const nextSnLines = nextInventorySnLines(type, currentSnLines, snLines, quantity, serialTracked);
   const useSnStatus = sourceUsesSnStatus(item);
   if (useSnStatus && snLines.length > 0) {
-    if (sourceIsSheet(env, item)) {
-      await updateSheetSnStatus(env, item, snLines, type === "outbound" ? "是" : "否", fields);
-    } else {
-      await updateBitableSnStatus(env, item, snLines, type === "outbound" ? "是" : "否", fields);
-    }
+    const availableFields = await getInventoryFieldNameSet(env, item);
+    const serialFields = [fields.sn, fields.inStock];
+    if (!sourceIsSheet(env, item)) serialFields.push(fields.parent, fields.code);
+    const missingField = serialFields.find((fieldName) => !availableFields.has(fieldName));
+    if (missingField) throw new Error(`Feishu field not found: ${missingField}`);
   }
-  await updateInventoryRow(env, item, {
+  const inventoryUpdates = {
     ...stockUpdateFields(env, type, item, quantity, nextStock, fields),
     ...(useSnStatus ? {} : (shouldUpdateSn(type, snLines, currentSnLines) ? { [fields.sn]: nextSnLines.join("\n") } : {}))
-  });
+  };
+  await updateInventoryRow(env, item, inventoryUpdates);
+  if (useSnStatus && snLines.length > 0) {
+    let snJournal = null;
+    try {
+      snJournal = await updateSnStatus(env, item, snLines, type === "outbound" ? "是" : "否", fields);
+    } catch (error) {
+      const rollbackErrors = [];
+      try {
+        await updateInventoryRow(env, item, stockRollbackFields(env, type, item, fields));
+      } catch (rollbackError) {
+        rollbackErrors.push(`库存回滚失败：${rollbackError.message || "unknown error"}`);
+      }
+      try {
+        await rollbackMovementSnStatus(env, item, fields, error.snJournal || snJournal);
+      } catch (rollbackError) {
+        rollbackErrors.push(`SN状态回滚失败：${rollbackError.message || "unknown error"}`);
+      }
+      if (rollbackErrors.length > 0) {
+        throw new Error(`SN 状态更新失败：${error.message || "unknown error"}；${rollbackErrors.join("；")}`);
+      }
+      throw error;
+    }
+  }
 
   let recordWarning = "";
   if (env.FEISHU_RECORDS_TABLE_ID) {
@@ -123,8 +170,22 @@ async function createMovement(env, type, payload) {
     }
   }
 
+  const responseSnLines = useSnStatus && type === "inbound"
+    ? [...allSnLines, ...snLines.filter((sn) => !allSnLines.some((existing) => sameSnLine(existing, sn)))]
+    : (useSnStatus ? allSnLines : nextSnLines);
+  const responseItem = {
+    ...item,
+    stock: nextStock,
+    sn: responseSnLines.join("\n"),
+    availableSn: nextSnLines,
+    ...(env.STOCK_WRITE_MODE === "stock"
+      ? {}
+      : type === "inbound"
+        ? { inboundTotal: item.inboundTotal + quantity }
+        : { outboundTotal: item.outboundTotal + quantity })
+  };
   return {
-    item: { ...item, stock: nextStock },
+    item: responseItem,
     movement: { code: item.code, type, quantity, reason, detail, operator, sn: snLines, time: new Date().toISOString() },
     warning: recordWarning
   };
@@ -136,10 +197,16 @@ async function updateItemProfile(env, payload) {
   if (!code && !recordId) throw new Error("code or recordId is required");
 
   const items = await getItems(env);
-  const item = items.find((entry) => (recordId && entry.recordId === recordId) || (code && itemMatchesCode(entry, code)));
+  const recordItem = recordId && items.find((entry) => entry.recordId === recordId);
+  const codeItem = code && items.find((entry) => itemMatchesCode(entry, code));
+  if (recordItem && code && !itemMatchesCode(recordItem, code)) {
+    throw new Error(`货物编号不属于所选物资：${code}`);
+  }
+  let item = recordItem || codeItem;
   if (!item) throw new Error("item not found");
 
   const fields = fieldNames(env);
+  item = await splitLegacySnRows(env, item, fields);
   const availableFields = await getInventoryFieldNameSet(env, item);
   const skippedFields = [];
   const updates = {};
@@ -153,6 +220,9 @@ async function updateItemProfile(env, payload) {
   textFields.forEach(([payloadKey, itemKey, fieldName, required]) => {
     if (Object.prototype.hasOwnProperty.call(payload, payloadKey)) {
       const nextValue = String(payload[payloadKey] || "").trim();
+      if (payloadKey === "nextCode" && nextValue && codeBelongsToOtherItem(items, item, nextValue)) {
+        throw new Error(`货物编号已属于其他物资：${nextValue}`);
+      }
       if (!availableFields.has(fieldName)) {
         if (required) throw new Error(`Feishu field not found: ${fieldName}`);
         if (nextValue !== String(item[itemKey] || "")) skippedFields.push(fieldName);
@@ -164,11 +234,17 @@ async function updateItemProfile(env, payload) {
 
   let groupedSnUpdate = null;
   if (Object.prototype.hasOwnProperty.call(payload, "sn")) {
+    if (sourceUsesSnStatus(item)) {
+      const serialFields = [fields.sn, fields.inStock, ...(sourceIsSheet(env, item) ? [] : [fields.parent])];
+      const missingField = serialFields.find((fieldName) => !availableFields.has(fieldName));
+      if (missingField) throw new Error(`Feishu field not found: ${missingField}`);
+    }
     const snLines = parseSnPayload(payload.sn);
     ensureUniqueSnLines(snLines);
     ensureSnNotUsedByOtherItems(items, item, snLines);
     const nextSn = snLines.join("\n");
     if (nextSn !== String(item.sn || "")) {
+      validateSnMaintenance(item, snLines);
       if (sourceUsesSnStatus(item)) {
         groupedSnUpdate = snLines;
       } else {
@@ -178,20 +254,121 @@ async function updateItemProfile(env, payload) {
     }
   }
 
-  if (Object.keys(updates).length === 0 && groupedSnUpdate === null) return { item, skippedFields };
+  const addCodes = Object.prototype.hasOwnProperty.call(payload, "addCodes")
+    ? parseSnPayload(payload.addCodes)
+    : [];
+  ensureUniqueTextLines(addCodes, "货物编号");
+  const newCodes = addCodes.filter((nextCode) => !itemHasNormalizedCode(item, nextCode));
+  const nextPrimaryCode = updates[fields.code] ?? item.code;
+  if (itemHasNormalizedCode(item, nextPrimaryCode) && normalizeGroupKey(nextPrimaryCode) !== normalizeGroupKey(item.code)) {
+    throw new Error(`主编号与此物资已有编号重复：${nextPrimaryCode}`);
+  }
+  if (newCodes.some((nextCode) => normalizeGroupKey(nextCode) === normalizeGroupKey(nextPrimaryCode))) {
+    throw new Error("新增编号不能与主编号重复");
+  }
+  newCodes.forEach((nextCode) => {
+    if (codeBelongsToOtherItem(items, item, nextCode)) {
+      throw new Error(`货物编号已属于其他物资：${nextCode}`);
+    }
+  });
+  if (newCodes.length > 0 && !sourceIsSheet(env, item) && !availableFields.has(fields.parent)) {
+    throw new Error(`Feishu field not found: ${fields.parent}`);
+  }
+
+  if (Object.keys(updates).length === 0 && groupedSnUpdate === null && newCodes.length === 0) return { item, skippedFields };
 
   if (Object.keys(updates).length > 0) await updateInventoryRow(env, item, updates);
+  const itemAfterProfile = { ...item, ...profilePatchFromUpdates(fields, updates) };
   let groupedSnResult = null;
   if (groupedSnUpdate !== null) {
-    const snTargetItem = { ...item, ...profilePatchFromUpdates(fields, updates) };
-    groupedSnResult = await updateGroupedSn(env, snTargetItem, groupedSnUpdate, fields);
+    groupedSnResult = await updateGroupedSn(env, itemAfterProfile, groupedSnUpdate, fields);
   }
-  const nextItem = { ...item, ...profilePatchFromUpdates(fields, updates) };
+  if (newCodes.length > 0) {
+    await appendItemCodes(env, itemAfterProfile, newCodes, fields, availableFields);
+  }
+  const nextItem = itemAfterProfile;
+  if (Object.prototype.hasOwnProperty.call(updates, fields.code)) {
+    const codes = (item.codes || [item.code]).filter((entry) => normalizeGroupKey(entry) !== normalizeGroupKey(item.code));
+    nextItem.codes = [...new Set([updates[fields.code], ...codes].filter(Boolean))];
+  }
+  if (newCodes.length > 0) nextItem.codes = [...new Set([...(item.codes || []), ...newCodes])];
   if (groupedSnResult) {
     nextItem.sn = groupedSnResult.sn.join("\n");
     nextItem.availableSn = groupedSnResult.availableSn;
   }
   return { item: nextItem, skippedFields };
+}
+
+async function createInventoryItem(env, payload) {
+  const code = String(payload.code || "").trim();
+  const name = String(payload.name || "").trim();
+  const owner = String(payload.owner || "").trim();
+  const note = String(payload.note || "").trim();
+  if (!code || !name) throw new Error("货物编号和货品名称都必须填写");
+
+  const items = await getItems(env);
+  if (codeBelongsToOtherItem(items, null, code)) throw new Error(`货物编号已存在：${code}`);
+
+  const source = await getDataSource(env);
+  const fields = fieldNames(env);
+  const tableId = env.FEISHU_ITEMS_TABLE_ID || source.tableId;
+  if (source.type === "bitable" && !tableId) throw new Error("Missing environment variable: FEISHU_ITEMS_TABLE_ID");
+  const fieldSet = source.type === "sheet"
+    ? new Set(await getSheetHeaders(env, source))
+    : new Set((await listBitableFields(env, source.token, tableId))
+      .map((field) => field.field_name || field.fieldName).filter(Boolean));
+  const requiredFields = [fields.code, fields.name, fields.sn, fields.inStock];
+  if (source.type === "bitable") requiredFields.push(fields.parent);
+  requiredFields.push(...(env.STOCK_WRITE_MODE === "stock"
+    ? [fields.stock]
+    : [fields.inQuantity, fields.outQuantity]));
+  for (const required of requiredFields) {
+    if (!fieldSet.has(required)) throw new Error(`Feishu field not found: ${required}`);
+  }
+  if (source.type === "sheet" && items.some((item) => normalizeGroupKey(item.name) === normalizeGroupKey(name))) {
+    throw new Error("飞书表格按货品名称归类，已存在同名物资；请使用已有物资并新增编号");
+  }
+
+  const createFields = {
+    [fields.code]: code,
+    [fields.name]: name,
+    [fields.sn]: "",
+    [fields.inStock]: "否"
+  };
+  if (owner && fieldSet.has(fields.owner)) createFields[fields.owner] = owner;
+  if (note && fieldSet.has(fields.note)) createFields[fields.note] = note;
+  if (env.STOCK_WRITE_MODE === "stock") createFields[fields.stock] = 0;
+  else {
+    createFields[fields.inQuantity] = 0;
+    createFields[fields.outQuantity] = 0;
+  }
+
+  if (source.type === "sheet") {
+    await appendSheetRow(env, source, await getSheetHeaders(env, source), createFields);
+  } else {
+    await createBitableRecord(env, source.token, tableId, createFields);
+  }
+
+  const created = await getItems(env);
+  const item = created.find((entry) => itemMatchesCode(entry, code));
+  if (!item) throw new Error("物资已写入飞书，但重新读取时未找到；请刷新页面确认");
+  return { item };
+}
+
+function validateSnMaintenance(item, desiredSn) {
+  const currentSn = splitSnLines(item.sn);
+  const available = availableSnLines(item);
+  if (currentSn.length === 0 && desiredSn.length === 0) return;
+
+  const availableKeys = new Set(available.map(normalizeSnLine));
+  const usedSn = currentSn.filter((sn) => !availableKeys.has(normalizeSnLine(sn)));
+  const expectedTotal = usedSn.length + Math.max(0, Number(item.stock || 0));
+  if (desiredSn.length !== expectedTotal) {
+    throw new Error(`SN维护后在库SN数必须等于当前库存 ${Number(item.stock || 0)}，已出库SN需保留`);
+  }
+  const desiredKeys = new Set(desiredSn.map(normalizeSnLine));
+  const removedUsed = usedSn.find((sn) => !desiredKeys.has(normalizeSnLine(sn)));
+  if (removedUsed) throw new Error(`SN 已出库，不能从网页删除：${removedUsed}`);
 }
 
 async function getInventoryFieldNameSet(env, item) {
@@ -208,13 +385,39 @@ function ensureSnNotUsedByOtherItems(items, currentItem, snLines) {
   const wanted = new Set(snLines.map(normalizeSnLine).filter(Boolean));
   if (wanted.size === 0) return;
   for (const item of items) {
-    const sameItem = currentItem.recordId
+    const sameItem = currentItem?.recordId
       ? item.recordId === currentItem.recordId
-      : itemMatchesCode(item, currentItem.code);
+      : currentItem
+        ? itemMatchesCode(item, currentItem.code)
+        : false;
     if (sameItem) continue;
     const duplicate = splitSnLines(item.sn).find((sn) => wanted.has(normalizeSnLine(sn)));
     if (duplicate) throw new Error(`SN already used by another item: ${duplicate}`);
   }
+}
+
+function ensureUniqueTextLines(lines, label) {
+  const seen = new Set();
+  for (const line of lines) {
+    const key = normalizeGroupKey(line);
+    if (seen.has(key)) throw new Error(`${label}重复：${line}`);
+    seen.add(key);
+  }
+}
+
+function itemHasNormalizedCode(item, code) {
+  const wanted = normalizeGroupKey(code);
+  if (!wanted) return false;
+  const codes = Array.isArray(item?.codes) ? item.codes : [item?.code];
+  return codes.some((entry) => normalizeGroupKey(entry) === wanted);
+}
+
+function codeBelongsToOtherItem(items, currentItem, code) {
+  return items.some((item) => {
+    if (currentItem?.recordId && item.recordId === currentItem.recordId) return false;
+    if (!currentItem?.recordId && currentItem && itemMatchesCode(item, currentItem.code)) return false;
+    return itemHasNormalizedCode(item, code);
+  });
 }
 
 function profilePatchFromUpdates(fields, updates) {
@@ -232,11 +435,12 @@ function profilePatchFromUpdates(fields, updates) {
   return patch;
 }
 
-function nextInventorySnLines(type, currentSnLines, movementSnLines, quantity) {
+function nextInventorySnLines(type, currentSnLines, movementSnLines, quantity, serialTracked = false) {
   ensureUniqueSnLines(movementSnLines);
+  const requiresSn = serialTracked || movementSnLines.length > 0;
 
   if (type === "inbound") {
-    if (movementSnLines.length > 0 && movementSnLines.length !== quantity) {
+    if (requiresSn && movementSnLines.length !== quantity) {
       throw new Error(`SN count must equal inbound quantity: ${quantity}`);
     }
     const duplicate = movementSnLines.find((sn) => currentSnLines.some((line) => sameSnLine(line, sn)));
@@ -246,7 +450,7 @@ function nextInventorySnLines(type, currentSnLines, movementSnLines, quantity) {
     return [...currentSnLines, ...movementSnLines];
   }
 
-  if (currentSnLines.length > 0 && movementSnLines.length !== quantity) {
+  if (requiresSn && movementSnLines.length !== quantity) {
     throw new Error(`SN count must equal outbound quantity: ${quantity}`);
   }
   if (movementSnLines.length === 0) return currentSnLines;
@@ -271,6 +475,16 @@ function ensureUniqueSnLines(snLines) {
 
 function shouldUpdateSn(type, movementSnLines, currentSnLines) {
   return movementSnLines.length > 0 || (type === "outbound" && currentSnLines.length > 0);
+}
+
+function stockRollbackFields(env, type, item, fields) {
+  if (env.STOCK_WRITE_MODE === "stock") {
+    return { [fields.stock]: Number(item.stock || 0) };
+  }
+
+  return type === "inbound"
+    ? { [fields.inQuantity]: Number(item.inboundTotal || 0) }
+    : { [fields.outQuantity]: Number(item.outboundTotal || 0) };
 }
 
 function parseSnPayload(value) {
@@ -371,9 +585,7 @@ async function findItem(env, { code = "", recordId = "" }) {
 }
 
 function itemMatchesCode(item, code) {
-  const wanted = String(code || "").trim();
-  if (!wanted) return false;
-  return item.code === wanted || (Array.isArray(item.codes) && item.codes.includes(wanted));
+  return itemHasNormalizedCode(item, code);
 }
 
 function normalizeItem(row, fields) {
@@ -818,6 +1030,53 @@ async function updateSheetRow(env, source, item, fields) {
   }
 }
 
+async function getSheetHeaders(env, source) {
+  if (!source.sheetId) throw new Error("Missing environment variable: FEISHU_SHEET_ID");
+  const params = new URLSearchParams({ ranges: `${source.sheetId}!A1:Z1`, valueRenderOption: "ToString" });
+  const result = await feishu(env, `/open-apis/sheets/v2/spreadsheets/${source.token}/values_batch_get?${params}`);
+  const valueRange = result.data?.valueRanges?.[0] || result.data?.value_ranges?.[0] || result.data?.valueRange || {};
+  return (valueRange.values?.[0] || []).map((value) => textValue(value).trim());
+}
+
+async function appendSheetRow(env, source, headers, fields) {
+  const lastColumn = columnLetters(headers.length);
+  if (!lastColumn) throw new Error("sheet headers not found");
+  const values = headers.map((header) => fields[header] ?? "");
+  await feishu(env, `/open-apis/sheets/v2/spreadsheets/${source.token}/values_append?insertDataOption=INSERT_ROWS`, {
+    method: "POST",
+    body: JSON.stringify({ valueRange: { range: `${source.sheetId}!A1:${lastColumn}1`, values: [values] } })
+  });
+}
+
+async function appendItemCodes(env, item, codes, fields, availableFields) {
+  const source = await getDataSource(env);
+  if (source.type === "sheet") {
+    const headers = item.meta?.headers || await getSheetHeaders(env, source);
+    for (const code of codes) {
+      await appendSheetRow(env, source, headers, {
+        [fields.name]: item.name || "",
+        [fields.code]: code,
+        [fields.sn]: "",
+        [fields.inStock]: "否"
+      });
+    }
+    return;
+  }
+
+  const tableId = env.FEISHU_ITEMS_TABLE_ID || source.tableId;
+  const parentRecordId = item.meta?.primaryRecordId || item.recordId;
+  if (!tableId) throw new Error("Missing environment variable: FEISHU_ITEMS_TABLE_ID");
+  if (!availableFields.has(fields.parent)) throw new Error(`Feishu field not found: ${fields.parent}`);
+  if (!parentRecordId) throw new Error("parent record not found; cannot add product codes");
+  for (const code of codes) {
+    await createBitableRecord(env, source.token, tableId, {
+      [fields.code]: code,
+      ...(availableFields.has(fields.inStock) ? { [fields.inStock]: "否" } : {}),
+      [fields.parent]: [parentRecordId]
+    });
+  }
+}
+
 async function updateSheetCells(env, source, headers, rowNumber, fields) {
   for (const [fieldName, value] of Object.entries(fields)) {
     const columnIndex = headers.indexOf(fieldName);
@@ -835,13 +1094,13 @@ async function updateSheetCells(env, source, headers, rowNumber, fields) {
   }
 }
 
-async function appendSheetSnRow(env, source, item, sn, fields) {
+async function appendSheetSnRow(env, source, item, sn, fields, status = "否") {
   const headers = item.meta?.headers || [];
   const values = headers.map((header) => {
     if (header === fields.name) return item.name || "";
     if (header === fields.code) return item.code || "";
     if (header === fields.sn) return sn;
-    if (header === fields.inStock) return "否";
+    if (header === fields.inStock) return status;
     return "";
   });
   const lastColumn = columnLetters(headers.length);
@@ -857,90 +1116,268 @@ async function appendSheetSnRow(env, source, item, sn, fields) {
   });
 }
 
+async function splitLegacySnRows(env, item, fields) {
+  const multiSnRows = snCandidateRows(item, fields.sn).filter((row) =>
+    splitSnLines(textValue((row.fields || {})[fields.sn])).length > 1
+  );
+  if (multiSnRows.length === 0) return item;
+
+  const source = await getDataSource(env);
+  const statusFieldPresent = source.type === "sheet"
+    ? (item.meta?.headers || []).includes(fields.inStock)
+    : (await getInventoryFieldNameSet(env, item)).has(fields.inStock);
+  if (!statusFieldPresent) throw new Error(`Feishu field not found: ${fields.inStock}`);
+
+  if (source.type === "sheet") {
+    const headers = item.meta?.headers || [];
+    const emptyRows = snCandidateRows(item, fields.sn).filter((row) =>
+      splitSnLines(textValue((row.fields || {})[fields.sn])).length === 0
+    );
+    for (const row of multiSnRows) {
+      const snLines = splitSnLines(textValue((row.fields || {})[fields.sn]));
+      const status = textValue((row.fields || {})[fields.inStock]) || "否";
+      await updateSheetCells(env, source, headers, row.meta.rowNumber, { [fields.sn]: snLines[0] });
+      for (const sn of snLines.slice(1)) {
+        const emptyRow = emptyRows.shift();
+        if (emptyRow) {
+          await updateSheetCells(env, source, headers, emptyRow.meta.rowNumber, {
+            [fields.name]: item.name || "",
+            [fields.code]: item.code || "",
+            [fields.sn]: sn,
+            [fields.inStock]: status
+          });
+        } else {
+          await appendSheetSnRow(env, source, item, sn, fields, status);
+        }
+      }
+    }
+  } else {
+    const tableId = env.FEISHU_ITEMS_TABLE_ID || source.tableId;
+    const availableFields = await getInventoryFieldNameSet(env, item);
+    const parentRecordId = item.meta?.primaryRecordId || item.recordId;
+    if (!tableId) throw new Error("Missing environment variable: FEISHU_ITEMS_TABLE_ID");
+    if (!availableFields.has(fields.parent)) throw new Error(`Feishu field not found: ${fields.parent}`);
+    if (!parentRecordId) throw new Error("parent record not found; cannot split multiple SN");
+
+    for (const row of multiSnRows) {
+      const snLines = splitSnLines(textValue((row.fields || {})[fields.sn]));
+      const status = textValue((row.fields || {})[fields.inStock]) || "否";
+      await updateBitableRecord(env, source.token, tableId, row.record_id, { [fields.sn]: snLines[0] });
+      for (const sn of snLines.slice(1)) {
+        await createBitableRecord(env, source.token, tableId, {
+          [fields.code]: item.code || "",
+          [fields.sn]: sn,
+          [fields.inStock]: status,
+          [fields.parent]: [parentRecordId]
+        });
+      }
+    }
+  }
+
+  const updatedItems = await getItems(env);
+  return updatedItems.find((entry) => entry.recordId === item.recordId)
+    || updatedItems.find((entry) => itemMatchesCode(entry, item.code))
+    || item;
+}
+
 async function updateSheetSnStatus(env, item, snLines, status, fields) {
+  const journal = [];
   const headers = item.meta?.headers || [];
   const columnIndex = headers.indexOf(fields.inStock);
   if (columnIndex < 0) throw new Error(`sheet field not found: ${fields.inStock}`);
-  const columnName = columnLetters(columnIndex + 1);
-  const wanted = new Set(snLines.map(normalizeSnLine));
-  const rows = item.meta?.sourceRows || [];
-  const matchingRows = rows.filter((row) => {
-    const rowSn = splitSnLines(textValue((row.fields || {})[fields.sn]));
-    return rowSn.some((sn) => wanted.has(normalizeSnLine(sn)));
-  });
-  if (matchingRows.some((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length > 1)) {
-    throw new Error("请先将一行多个 SN 拆分为每行一个，再办理出入库");
-  }
-  const found = new Set();
-  for (const row of matchingRows) {
-    const rowSn = splitSnLines(textValue((row.fields || {})[fields.sn]));
-    rowSn.filter((sn) => wanted.has(normalizeSnLine(sn))).forEach((sn) => found.add(normalizeSnLine(sn)));
-    await feishu(env, `/open-apis/sheets/v2/spreadsheets/${item.meta.sourceToken}/values`, {
-      method: "PUT",
-      body: JSON.stringify({ valueRange: { range: `${item.meta.sheetId}!${columnName}${row.meta.rowNumber}:${columnName}${row.meta.rowNumber}`, values: [[status]] } })
-    });
-  }
-  const missing = snLines.filter((sn) => !found.has(normalizeSnLine(sn)));
-  if (missing.length > 0 && status === "否") {
-    const emptyRows = snCandidateRows(item, fields.sn).filter((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length === 0);
-    const source = await getDataSource(env);
-    for (const sn of missing) {
+  const source = await getDataSource(env);
+  const candidates = snCandidateRows(item, fields.sn);
+  const emptyRows = candidates.filter((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length === 0);
+
+  try {
+    for (const sn of snLines) {
+      const matchingRows = candidates.filter((row) =>
+        splitSnLines(textValue((row.fields || {})[fields.sn])).some((entry) => sameSnLine(entry, sn))
+      );
+      if (matchingRows.some((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length > 1)) {
+        throw new Error("请先将一行多个 SN 拆分为每行一个，再办理出入库");
+      }
+      if (matchingRows.length > 1) throw new Error(`SN 在物资中重复：${sn}`);
+
+      const row = matchingRows[0];
+      if (row) {
+        const previousStatus = (row.fields || {})[fields.inStock] ?? "";
+        if (status === "是" && !isInStockValue(textValue(previousStatus))) {
+          throw new Error(`SN not found in inventory: ${sn}`);
+        }
+        journal.push({ kind: "restore", sourceType: "sheet", rowNumber: row.meta?.rowNumber, fields: { [fields.inStock]: textValue(previousStatus) } });
+        await updateSheetCells(env, source, headers, row.meta.rowNumber, { [fields.inStock]: status });
+        continue;
+      }
+
+      if (status !== "否") throw new Error(`SN not found in inventory: ${sn}`);
       const emptyRow = emptyRows.shift();
       if (emptyRow) {
+        journal.push({
+          kind: "restore",
+          sourceType: "sheet",
+          rowNumber: emptyRow.meta?.rowNumber,
+          fields: {
+            [fields.sn]: textValue((emptyRow.fields || {})[fields.sn]),
+            [fields.inStock]: textValue((emptyRow.fields || {})[fields.inStock])
+          }
+        });
         await updateSheetCells(env, source, headers, emptyRow.meta.rowNumber, {
           [fields.sn]: sn,
           [fields.inStock]: status
         });
       } else {
-        await appendSheetSnRow(env, source, item, sn, fields);
+        journal.push({ kind: "clear-created", sourceType: "sheet", sn });
+        await appendSheetSnRow(env, source, item, sn, fields, status);
       }
     }
-  } else if (missing.length > 0) {
-    throw new Error(`SN not found in inventory: ${missing[0]}`);
+    return journal;
+  } catch (error) {
+    error.snJournal = journal;
+    throw error;
   }
 }
 
 async function updateBitableSnStatus(env, item, snLines, status, fields) {
+  const journal = [];
   const source = await getDataSource(env);
   const tableId = env.FEISHU_ITEMS_TABLE_ID || source.tableId;
-  const wanted = new Set(snLines.map(normalizeSnLine));
-  const matchingRows = (item.meta?.sourceRows || []).filter((row) => {
-    const rowSn = splitSnLines(textValue((row.fields || {})[fields.sn]));
-    return rowSn.some((sn) => wanted.has(normalizeSnLine(sn)));
-  });
-  if (matchingRows.some((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length > 1)) {
-    throw new Error("请先将一行多个 SN 拆分为每行一个，再办理出入库");
-  }
-  const missing = snLines.filter((sn) => !matchingRows.some((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).some((entry) => sameSnLine(entry, sn))));
-  if (missing.length > 0 && status !== "否") throw new Error(`SN not found in inventory: ${missing[0]}`);
-
+  const candidates = snCandidateRows(item, fields.sn);
+  const emptyRows = candidates.filter((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length === 0);
   const parentRecordId = item.meta?.primaryRecordId || item.recordId;
-  if (missing.length > 0 && !parentRecordId) throw new Error("parent record not found; cannot create SN rows");
-  const emptyRows = snCandidateRows(item, fields.sn).filter((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length === 0);
-  for (const sn of missing) {
-    const emptyRow = emptyRows.shift();
-    if (emptyRow) {
-      await updateBitableRecord(env, source.token, tableId, emptyRow.record_id, {
-        [fields.sn]: sn,
-        [fields.inStock]: status
-      });
-    } else {
-      await createBitableRecord(env, source.token, tableId, {
-        [fields.code]: item.code || "",
-        [fields.sn]: sn,
-        [fields.inStock]: status,
-        [fields.parent]: [parentRecordId]
-      });
+  if (!tableId) throw new Error("Missing environment variable: FEISHU_ITEMS_TABLE_ID");
+  if (!parentRecordId) throw new Error("parent record not found; cannot create SN rows");
+
+  try {
+    for (const sn of snLines) {
+      const matchingRows = candidates.filter((row) =>
+        splitSnLines(textValue((row.fields || {})[fields.sn])).some((entry) => sameSnLine(entry, sn))
+      );
+      if (matchingRows.some((row) => splitSnLines(textValue((row.fields || {})[fields.sn])).length > 1)) {
+        throw new Error("请先将一行多个 SN 拆分为每行一个，再办理出入库");
+      }
+      if (matchingRows.length > 1) throw new Error(`SN 在物资中重复：${sn}`);
+
+      const row = matchingRows[0];
+      if (row) {
+        const previousStatus = (row.fields || {})[fields.inStock] ?? "";
+        if (status === "是" && !isInStockValue(textValue(previousStatus))) {
+          throw new Error(`SN not found in inventory: ${sn}`);
+        }
+        const recordId = String(row.record_id || "");
+        if (!recordId) throw new Error(`SN record id missing: ${sn}`);
+        journal.push({ kind: "restore", sourceType: "bitable", recordId, fields: { [fields.inStock]: textValue(previousStatus) } });
+        await updateBitableRecord(env, source.token, tableId, recordId, { [fields.inStock]: status });
+        continue;
+      }
+
+      if (status !== "否") throw new Error(`SN not found in inventory: ${sn}`);
+      const emptyRow = emptyRows.shift();
+      if (emptyRow) {
+        const recordId = String(emptyRow.record_id || "");
+        if (!recordId) throw new Error(`SN record id missing: ${sn}`);
+        journal.push({
+          kind: "restore",
+          sourceType: "bitable",
+          recordId,
+          fields: {
+            [fields.sn]: textValue((emptyRow.fields || {})[fields.sn]),
+            [fields.inStock]: textValue((emptyRow.fields || {})[fields.inStock])
+          }
+        });
+        await updateBitableRecord(env, source.token, tableId, recordId, {
+          [fields.sn]: sn,
+          [fields.inStock]: status
+        });
+      } else {
+        const entry = { kind: "clear-created", sourceType: "bitable", sn };
+        journal.push(entry);
+        const result = await createBitableRecord(env, source.token, tableId, {
+          [fields.code]: item.code || "",
+          [fields.sn]: sn,
+          [fields.inStock]: status,
+          [fields.parent]: [parentRecordId]
+        });
+        entry.recordId = String(result.data?.record?.record_id || "");
+      }
+    }
+    return journal;
+  } catch (error) {
+    error.snJournal = journal;
+    throw error;
+  }
+}
+
+async function updateSnStatus(env, item, snLines, status, fields) {
+  return sourceIsSheet(env, item)
+    ? updateSheetSnStatus(env, item, snLines, status, fields)
+    : updateBitableSnStatus(env, item, snLines, status, fields);
+}
+
+async function rollbackMovementSnStatus(env, item, fields, journal = []) {
+  if (!Array.isArray(journal) || journal.length === 0) return;
+  const source = await getDataSource(env);
+  const tableId = env.FEISHU_ITEMS_TABLE_ID || source.tableId;
+  const rollbackErrors = [];
+  let freshItem = null;
+  if (journal.some((entry) => entry.kind === "clear-created" && !entry.recordId)) {
+    const freshItems = await getItems(env);
+    freshItem = freshItems.find((entry) => entry.recordId === item.recordId)
+      || freshItems.find((entry) => itemMatchesCode(entry, item.code));
+  }
+
+  for (const entry of [...journal].reverse()) {
+    try {
+      if (entry.kind === "restore") {
+        if (entry.sourceType === "sheet") {
+          const headers = item.meta?.headers || [];
+          await updateSheetCells(env, source, headers, entry.rowNumber, entry.fields);
+        } else {
+          await updateBitableRecord(env, source.token, tableId, entry.recordId, entry.fields);
+        }
+        continue;
+      }
+
+      if (entry.kind !== "clear-created") continue;
+      if (entry.sourceType === "bitable" && entry.recordId) {
+        await updateBitableRecord(env, source.token, tableId, entry.recordId, {
+          [fields.code]: "",
+          [fields.sn]: "",
+          [fields.inStock]: "否"
+        });
+        continue;
+      }
+
+      if (!freshItem) {
+        const freshItems = await getItems(env);
+        freshItem = freshItems.find((candidate) => candidate.recordId === item.recordId)
+          || freshItems.find((candidate) => itemMatchesCode(candidate, item.code));
+      }
+      const rows = snCandidateRows(freshItem || item, fields.sn).filter((row) =>
+        splitSnLines(textValue((row.fields || {})[fields.sn])).some((sn) => sameSnLine(sn, entry.sn))
+      );
+      for (const row of rows) {
+        if (entry.sourceType === "sheet") {
+          await updateSheetCells(env, source, item.meta?.headers || [], row.meta?.rowNumber, {
+            [fields.name]: "",
+            [fields.code]: "",
+            [fields.sn]: "",
+            [fields.inStock]: ""
+          });
+        } else {
+          await updateBitableRecord(env, source.token, tableId, row.record_id, {
+            [fields.code]: "",
+            [fields.sn]: "",
+            [fields.inStock]: "否"
+          });
+        }
+      }
+    } catch (error) {
+      rollbackErrors.push(error.message || "unknown error");
     }
   }
 
-  const updated = new Set();
-  for (const row of matchingRows) {
-    const recordId = String(row.record_id || "");
-    if (!recordId || updated.has(recordId)) continue;
-    updated.add(recordId);
-    await updateBitableRecord(env, source.token, tableId, recordId, { [fields.inStock]: status });
-  }
+  if (rollbackErrors.length > 0) throw new Error(rollbackErrors.join("；"));
 }
 
 async function updateGroupedSn(env, item, desiredSn, fields) {

@@ -148,6 +148,12 @@ dialog {
   backdrop-filter: saturate(180%) blur(28px);
 }
 
+.topbarActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 h1,
 h2,
 p {
@@ -347,6 +353,11 @@ textarea:focus {
   background: rgba(255, 255, 255, 0.075);
   color: var(--ink);
   font-weight: 700;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .primaryButton,
@@ -644,6 +655,13 @@ textarea:focus {
   background: rgba(41, 151, 255, 0.18);
 }
 
+.snChoice.used {
+  cursor: default;
+  border-color: rgba(255, 255, 255, 0.1);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .itemStats {
   display: grid;
   justify-items: end;
@@ -814,6 +832,12 @@ dialog {
   gap: 16px;
 }
 
+.formHint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .qrActions {
   display: flex;
   flex-wrap: wrap;
@@ -917,6 +941,16 @@ dialog {
 
   .topbar {
     padding: 12px 14px;
+  }
+
+  .topbarActions {
+    gap: 6px;
+  }
+
+  .topbarActions button {
+    min-height: 38px;
+    padding-inline: 10px;
+    font-size: 13px;
   }
 
   .layout {

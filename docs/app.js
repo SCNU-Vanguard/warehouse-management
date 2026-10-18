@@ -1,7 +1,7 @@
 ﻿const DEMO_ITEMS = [
-  { recordId: "demo-1", code: "WZ-0001", name: "电源适配器 12V", sn: "SN-DEMO-001（日常使用）", stock: 36, owner: "张三", note: "常用备件" },
-  { recordId: "demo-2", code: "WZ-0002", name: "网线 2m", sn: "SN-DEMO-002", stock: 120, owner: "李四", note: "蓝色" },
-  { recordId: "demo-3", code: "WZ-0003", name: "开发板", sn: "SN-DEMO-003（测试台架）", stock: 18, owner: "王五", note: "研发借用" },
+  { recordId: "demo-1", code: "WZ-0001", name: "电源适配器 12V", sn: "SN-DEMO-001", stock: 1, owner: "张三", note: "常用备件" },
+  { recordId: "demo-2", code: "WZ-0002", name: "网线 2m", sn: "SN-DEMO-002", stock: 1, owner: "李四", note: "蓝色" },
+  { recordId: "demo-3", code: "WZ-0003", name: "开发板", sn: "SN-DEMO-003", stock: 1, owner: "王五", note: "研发借用" },
   { recordId: "demo-4", code: "WZ-0004", name: "M3 螺丝包", sn: "", stock: 240, owner: "", note: "每包 100 颗" }
 ];
 
@@ -42,6 +42,7 @@ const els = {
   itemList: $("itemList"),
   searchInput: $("searchInput"),
   refreshButton: $("refreshButton"),
+  createItemButton: $("createItemButton"),
   scanButton: $("scanButton"),
   scannerPanel: $("scannerPanel"),
   scannerVideo: $("scannerVideo"),
@@ -64,9 +65,19 @@ const els = {
   itemEditDialog: $("itemEditDialog"),
   itemEditForm: $("itemEditForm"),
   editCodeInput: $("editCodeInput"),
+  editAddCodesInput: $("editAddCodesInput"),
   editNameInput: $("editNameInput"),
   editSnInput: $("editSnInput"),
   editItemStatus: $("editItemStatus"),
+  itemCreateDialog: $("itemCreateDialog"),
+  itemCreateForm: $("itemCreateForm"),
+  createNameInput: $("createNameInput"),
+  createCodeInput: $("createCodeInput"),
+  createOwnerInput: $("createOwnerInput"),
+  createNoteInput: $("createNoteInput"),
+  createItemStatus: $("createItemStatus"),
+  closeCreateDialogButton: $("closeCreateDialogButton"),
+  cancelCreateDialogButton: $("cancelCreateDialogButton"),
   closeEditDialogButton: $("closeEditDialogButton"),
   cancelEditDialogButton: $("cancelEditDialogButton"),
   qrButton: $("qrButton"),
@@ -225,17 +236,23 @@ function renderSnList(item) {
   els.detailSnCount.textContent = `${snLines.length}/${allSnLines.length} 个在库`;
   els.detailSn.replaceChildren();
   if (snLines.length === 0) {
-    els.detailSn.textContent = "-";
-    return;
+    if (allSnLines.length === 0) {
+      els.detailSn.textContent = "-";
+      return;
+    }
   }
 
-  snLines.forEach((sn) => {
+  const availableKeys = new Set(snLines.map(normalizeSnLine));
+  allSnLines.forEach((sn) => {
+    const available = availableKeys.has(normalizeSnLine(sn));
     const button = document.createElement("button");
     button.className = "snChoice";
     button.type = "button";
-    button.textContent = sn;
-    button.classList.toggle("active", state.selectedSn.includes(sn));
-    button.addEventListener("click", () => toggleSnSelection(sn));
+    button.textContent = available ? sn : `${sn}（已使用）`;
+    button.disabled = !available;
+    button.classList.toggle("used", !available);
+    button.classList.toggle("active", available && state.selectedSn.includes(sn));
+    if (available) button.addEventListener("click", () => toggleSnSelection(sn));
     els.detailSn.appendChild(button);
   });
 }
@@ -359,9 +376,10 @@ function isSelectedItem(item) {
 }
 
 function itemHasCode(item, code) {
-  const wanted = String(code || "").trim();
+  const wanted = String(code || "").trim().replace(/\s+/g, " ").toLowerCase();
   if (!wanted) return false;
-  return item.code === wanted || (Array.isArray(item.codes) && item.codes.includes(wanted));
+  const codes = Array.isArray(item.codes) ? item.codes : [item.code];
+  return codes.some((entry) => String(entry || "").trim().replace(/\s+/g, " ").toLowerCase() === wanted);
 }
 
 function itemCodeLabel(item) {
@@ -433,20 +451,35 @@ async function submitMovement(event) {
     return;
   }
   const itemSnLines = Array.isArray(item.availableSn) ? item.availableSn : splitLines(item.sn);
-  if (type === "outbound" && itemSnLines.length > 0 && snLines.length !== quantity) {
-    setFormStatus(`该物资有SN码，请填写 ${quantity} 个本次出库SN`, true);
+  const allSnLines = splitLines(item.sn);
+  if (allSnLines.length > 0 && itemSnLines.length !== Number(item.stock || 0)) {
+    setFormStatus(`当前库存为 ${Number(item.stock || 0)}，在库 SN 为 ${itemSnLines.length}，数量不一致；请先校正物资 SN`, true);
     return;
   }
-  if (type === "inbound" && snLines.length > 0 && snLines.length !== quantity) {
-    setFormStatus(`填写了SN码时，SN数量需要等于入库数量：${quantity} 个`, true);
+  if (type === "inbound" && allSnLines.length === 0 && Number(item.stock || 0) > 0 && snLines.length > 0) {
+    setFormStatus("该物资已有无 SN 库存；请先在编辑信息中为现有库存补齐 SN，再继续入库", true);
     return;
   }
-  const duplicateSn = type === "inbound" ? findDuplicateSn(snLines, itemSnLines) : findDuplicateSn(snLines);
+  const serialTracked = allSnLines.length > 0 || snLines.length > 0;
+  if (serialTracked && snLines.length !== quantity) {
+    setFormStatus(`${type === "inbound" ? "入库" : "出库"}数量为 ${quantity} 时，必须填写同样数量的 SN`, true);
+    return;
+  }
+  const duplicateSn = type === "inbound" ? findDuplicateSn(snLines, allSnLines) : findDuplicateSn(snLines);
   if (duplicateSn) {
-    setFormStatus(type === "inbound" ? `该SN已在库存中，不能重复入库：${duplicateSn}` : `本次出库SN重复：${duplicateSn}`, true);
+    setFormStatus(type === "inbound" ? `该SN已登记过，不能重复入库：${duplicateSn}` : `本次出库SN重复：${duplicateSn}`, true);
     return;
+  }
+  if (type === "outbound") {
+    const unavailable = snLines.find((sn) => !itemSnLines.some((availableSn) => normalizeSnLine(availableSn) === normalizeSnLine(sn)));
+    if (unavailable) {
+      setFormStatus(`该 SN 不在当前库存中：${unavailable}`, true);
+      return;
+    }
   }
 
+  const submitButton = els.movementForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
   setFormStatus("正在提交...");
   try {
     let submitWarning = "";
@@ -469,6 +502,8 @@ async function submitMovement(event) {
     setFormStatus(submitWarning || "已提交", Boolean(submitWarning));
   } catch (error) {
     setFormStatus(error.message, true);
+  } finally {
+    submitButton.disabled = false;
   }
 }
 
@@ -476,6 +511,19 @@ function applyDemoMovement(type, payload) {
   const item = getSelectedItem();
   const delta = type === "inbound" ? payload.quantity : -payload.quantity;
   item.stock = Number(item.stock || 0) + delta;
+  const allSnLines = splitLines(item.sn);
+  const availableSnLines = Array.isArray(item.availableSn) ? [...item.availableSn] : [...allSnLines];
+  if (type === "inbound") {
+    payload.sn.forEach((sn) => {
+      if (!allSnLines.some((entry) => normalizeSnLine(entry) === normalizeSnLine(sn))) allSnLines.push(sn);
+      if (!availableSnLines.some((entry) => normalizeSnLine(entry) === normalizeSnLine(sn))) availableSnLines.push(sn);
+    });
+  } else {
+    const outboundKeys = new Set(payload.sn.map(normalizeSnLine));
+    item.availableSn = availableSnLines.filter((sn) => !outboundKeys.has(normalizeSnLine(sn)));
+  }
+  item.sn = allSnLines.join("\n");
+  if (type === "inbound") item.availableSn = availableSnLines;
   state.records.unshift({
     code: item.code,
     name: item.name,
@@ -739,6 +787,7 @@ function openEditDialog() {
   const item = getSelectedItem();
   if (!item) return;
   els.editCodeInput.value = item.code || "";
+  els.editAddCodesInput.value = "";
   els.editNameInput.value = item.name || "";
   els.editSnInput.value = item.sn || "";
   setEditStatus("");
@@ -761,6 +810,7 @@ async function submitItemEdit(event) {
     code: item.code,
     recordId: item.recordId,
     nextCode: els.editCodeInput.value.trim(),
+    addCodes: splitLines(els.editAddCodesInput.value),
     name: els.editNameInput.value.trim(),
     sn: snLines
   };
@@ -803,6 +853,58 @@ async function submitItemEdit(event) {
   }
 }
 
+function setCreateStatus(message, isError = false) {
+  els.createItemStatus.textContent = message;
+  els.createItemStatus.className = `formStatus ${isError ? "error" : "ok"}`;
+}
+
+function openCreateDialog() {
+  els.itemCreateForm.reset();
+  setCreateStatus("");
+  els.itemCreateDialog.showModal();
+  els.createNameInput.focus();
+}
+
+async function submitItemCreate(event) {
+  event.preventDefault();
+  if (!state.apiBase) {
+    setCreateStatus("当前为演示数据，连接飞书 API 后才能创建物资", true);
+    return;
+  }
+
+  const payload = {
+    name: els.createNameInput.value.trim(),
+    code: els.createCodeInput.value.trim(),
+    owner: els.createOwnerInput.value.trim(),
+    note: els.createNoteInput.value.trim()
+  };
+  if (!payload.name || !payload.code) {
+    setCreateStatus("货品名称和主货物编号都必须填写", true);
+    return;
+  }
+
+  const submitButton = els.itemCreateForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  setCreateStatus("正在创建...");
+  try {
+    const result = await requestJson("/api/items/create", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    await loadData();
+    const created = state.items.find((item) => itemHasCode(item, payload.code))
+      || state.items.find((item) => item.recordId && item.recordId === result.item?.recordId);
+    if (!created) throw new Error("物资已提交，但刷新列表时没有找到；请刷新页面确认飞书数据");
+    els.itemCreateDialog.close();
+    selectItem(created);
+    setStatus("物资已创建，当前库存为 0；请通过入库录入实际数量和 SN");
+  } catch (error) {
+    setCreateStatus(error.message || "创建失败", true);
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
 function formatTime(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -828,6 +930,10 @@ function initFromUrl() {
 
 function bindEvents() {
   els.refreshButton.addEventListener("click", loadData);
+  els.createItemButton.addEventListener("click", openCreateDialog);
+  els.itemCreateForm.addEventListener("submit", submitItemCreate);
+  els.closeCreateDialogButton.addEventListener("click", () => els.itemCreateDialog.close());
+  els.cancelCreateDialogButton.addEventListener("click", () => els.itemCreateDialog.close());
   els.searchInput.addEventListener("input", renderItems);
   els.editItemButton.addEventListener("click", openEditDialog);
   els.itemEditForm.addEventListener("submit", submitItemEdit);

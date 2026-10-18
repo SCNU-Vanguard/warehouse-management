@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>物资管理</title>
-    <link rel="stylesheet" href="./styles.css?v=20261019-sheet-layout-1" />
+    <link rel="stylesheet" href="./styles.css?v=20261019-inventory-workflow-3" />
   </head>
   <body>
     <div class="brandV" aria-hidden="true"><img class="brandVImage" src="./assets/flag.jpg" alt="" /></div>
@@ -14,7 +14,10 @@
         <p class="topBrand">VANGUARD</p><p class="eyebrow">Feishu Bitable Source</p>
         <h1>物资管理</h1>
       </div>
-      <button id="refreshButton" class="iconButton" type="button" title="刷新">刷新</button>
+      <div class="topbarActions">
+        <button id="createItemButton" class="primaryButton" type="button">新增物资</button>
+        <button id="refreshButton" class="iconButton" type="button" title="刷新">刷新</button>
+      </div>
     </header>
 
     <main class="layout">
@@ -166,12 +169,16 @@
     <dialog id="itemEditDialog">
       <form id="itemEditForm" class="settingsForm">
         <div class="sectionHeader compactHeader">
-          <h2>编辑物资信息</h2>
+          <h2>维护物资信息与 SN</h2>
           <button id="closeEditDialogButton" value="cancel" class="plainButton" type="button">关闭</button>
         </div>
         <label>
-          <span>货物编号</span>
+          <span>主货物编号</span>
           <input id="editCodeInput" type="text" />
+        </label>
+        <label>
+          <span>追加货物编号</span>
+          <textarea id="editAddCodesInput" rows="3" placeholder="一个编号一行；已有主编号和其他编号会保留"></textarea>
         </label>
         <label>
           <span>货品</span>
@@ -181,11 +188,43 @@
           <span>SN码</span>
           <textarea id="editSnInput" rows="5" placeholder="一行一个SN码"></textarea>
         </label>
+        <p class="formHint">编辑用于校正/补登记当前库存的 SN；需保留已出库 SN，且编辑后的在库 SN 数要与当前库存一致。新增库存请使用入库。</p>
         <div class="dialogActions">
           <button id="cancelEditDialogButton" value="cancel" type="button">取消</button>
           <button class="primaryButton" type="submit">保存</button>
         </div>
         <p id="editItemStatus" class="formStatus" role="status"></p>
+      </form>
+    </dialog>
+
+    <dialog id="itemCreateDialog">
+      <form id="itemCreateForm" class="settingsForm">
+        <div class="sectionHeader compactHeader">
+          <h2>新增物资</h2>
+          <button id="closeCreateDialogButton" value="cancel" class="plainButton" type="button">关闭</button>
+        </div>
+        <p class="formHint">新物资从零库存建立；录入后可立即办理入库并添加本次 SN。</p>
+        <label>
+          <span>货品名称</span>
+          <input id="createNameInput" type="text" required maxlength="120" placeholder="例如：RM_M2006电机" />
+        </label>
+        <label>
+          <span>主货物编号</span>
+          <input id="createCodeInput" type="text" required maxlength="120" placeholder="例如：10182026M2006" />
+        </label>
+        <label>
+          <span>负责人（可选）</span>
+          <input id="createOwnerInput" type="text" maxlength="120" />
+        </label>
+        <label>
+          <span>备注（可选）</span>
+          <textarea id="createNoteInput" rows="3"></textarea>
+        </label>
+        <div class="dialogActions">
+          <button id="cancelCreateDialogButton" value="cancel" type="button">取消</button>
+          <button class="primaryButton" type="submit">创建物资</button>
+        </div>
+        <p id="createItemStatus" class="formStatus" role="status"></p>
       </form>
     </dialog>
 
@@ -203,7 +242,7 @@
     </template>
 
     <script src="./vendor/qrcode.js?v=1.4.4"></script>
-    <script src="./app.js?v=20261019-sheet-layout-1" defer></script>
+    <script src="./app.js?v=20261019-inventory-workflow-3" defer></script>
   </body>
 </html>
 
