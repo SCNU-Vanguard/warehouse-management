@@ -76,6 +76,7 @@ edgeone.json             EdgeOne 可选配置
 货物编号
 货品
 SN码
+是否被使用
 入库数量
 出库数量
 现有库存数量
@@ -91,6 +92,8 @@ SN码
 ```
 
 物资详情里的“累计出库”来自主表的 `出库数量` 字段。
+
+库存主表支持同一物品占多行、每行填写一个 SN 码。`是否被使用` 为 `是` 表示出库/已使用，为 `否` 或空表示仍在库。出入库只更新这个状态，不删除 SN；读取时后端会按 `货物编号`（没有编号时按 `货品`）合并重复行。
 
 如果要记录出入库历史，另建一张表，字段如下：
 
@@ -208,6 +211,7 @@ FIELD_CODE=货物编号
 FIELD_NAME=货品
 FIELD_STOCK=现有库存数量
 FIELD_SN=SN码
+FIELD_IN_STOCK=是否被使用
 FIELD_IN_QTY=入库数量
 FIELD_OUT_QTY=出库数量
 STOCK_WRITE_MODE=movement_totals

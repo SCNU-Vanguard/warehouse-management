@@ -644,6 +644,23 @@ textarea:focus {
   background: rgba(41, 151, 255, 0.18);
 }
 
+.itemStats {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  min-width: 76px;
+}
+
+.itemSnCount {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.itemQty {
+  font-variant-numeric: tabular-nums;
+}
+
 .formStatus {
   min-height: 20px;
   color: var(--muted);

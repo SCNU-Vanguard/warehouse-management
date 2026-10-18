@@ -96,12 +96,15 @@ async function createMovement(env, type, payload) {
 
   const nextStock = type === "inbound" ? currentStock + quantity : currentStock - quantity;
   const fields = fieldNames(env);
-  const currentSnLines = splitSnLines(item.sn);
+  const currentSnLines = availableSnLines(item);
   const nextSnLines = nextInventorySnLines(type, currentSnLines, snLines, quantity);
   await updateInventoryRow(env, item, {
     ...stockUpdateFields(env, type, item, quantity, nextStock, fields),
-    ...(shouldUpdateSn(type, snLines, currentSnLines) ? { [fields.sn]: nextSnLines.join("\n") } : {})
+    ...(sourceIsSheet(env, item) ? {} : (shouldUpdateSn(type, snLines, currentSnLines) ? { [fields.sn]: nextSnLines.join("\n") } : {}))
   });
+  if (sourceIsSheet(env, item) && snLines.length > 0) {
+    await updateSheetSnStatus(env, item, snLines, type === "outbound" ? "是" : "否", fields);
+  }
 
   let recordWarning = "";
   if (env.FEISHU_RECORDS_TABLE_ID) {
@@ -253,7 +256,7 @@ function parseSnPayload(value) {
 }
 
 function splitSnLines(value) {
-  return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return String(value || "").split(/[\r\n,，;；]+/).map((line) => line.trim()).filter(Boolean);
 }
 
 function sameSnLine(a, b) {
@@ -313,7 +316,7 @@ async function getItems(env) {
 
   if (source.type === "sheet") {
     const rows = await listSheetRows(env, source);
-    return rows.map((row) => normalizeItem(row, fields)).filter((item) => item.code || item.name);
+    return normalizeSheetItems(rows, fields);
   }
 
   const tableId = env.FEISHU_ITEMS_TABLE_ID || source.tableId;
@@ -349,6 +352,7 @@ function normalizeItem(row, fields) {
     code: textValue(data[fields.code]),
     name: textValue(data[fields.name]),
     sn: textValue(data[fields.sn]),
+    inStock: textValue(data[fields.inStock]),
     stock: numberValue(data[fields.stock]),
     inboundTotal: numberValue(data[fields.inQuantity]),
     outboundTotal: numberValue(data[fields.outQuantity]),
@@ -357,6 +361,87 @@ function normalizeItem(row, fields) {
     note: textValue(data[fields.note]),
     meta: row.meta || null
   };
+}
+
+function rowAvailableSn(item) {
+  return isInStockValue(item.inStock) ? splitSnLines(item.sn) : [];
+}
+
+function isInStockValue(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return !["是", "yes", "y", "true", "1"].includes(text);
+}
+
+function availableSnLines(item) {
+  if (Array.isArray(item.availableSn)) return item.availableSn;
+  return splitSnLines(item.sn);
+}
+
+function sourceIsSheet(env, item) {
+  return Array.isArray(item.meta?.sourceRows);
+}
+
+// Sheets are commonly maintained in either of two forms: one row per item
+// with newline-separated SNs, or one row per physical item. Collapse the
+// latter here so the rest of the inventory code keeps one item per category.
+function normalizeSheetItems(rows, fields) {
+  const items = [];
+  const byKey = new Map();
+
+  rows.forEach((row) => {
+    const item = normalizeItem(row, fields);
+    if (!item.code && !item.name) return;
+
+    const key = item.code ? `code:${item.code}` : `name:${item.name}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      const normalized = {
+        ...item,
+        availableSn: rowAvailableSn(item),
+        meta: {
+          ...(item.meta || {}),
+          rowNumbers: [item.meta?.rowNumber].filter(Boolean),
+          sourceRows: [row],
+          sourceToken: row.meta?.sourceToken || "",
+          sheetId: row.meta?.sheetId || ""
+        }
+      };
+      byKey.set(key, normalized);
+      items.push(normalized);
+      return;
+    }
+
+    const currentSn = splitSnLines(existing.sn);
+    const nextSn = splitSnLines(item.sn);
+    nextSn.forEach((sn) => {
+      if (!currentSn.some((line) => sameSnLine(line, sn))) currentSn.push(sn);
+    });
+    existing.sn = currentSn.join("\n");
+    const available = availableSnLines(existing);
+    const nextAvailable = rowAvailableSn(item);
+    nextAvailable.forEach((sn) => {
+      if (!available.some((line) => sameSnLine(line, sn))) available.push(sn);
+    });
+    existing.availableSn = available;
+    existing.meta.rowNumbers.push(item.meta?.rowNumber);
+    existing.meta.sourceRows.push(row);
+    existing.stock = mergeSheetNumber(existing.stock, item.stock, existing.meta.sourceRows, fields.stock);
+    existing.inboundTotal = mergeSheetNumber(existing.inboundTotal, item.inboundTotal, existing.meta.sourceRows, fields.inQuantity);
+    existing.outboundTotal = mergeSheetNumber(existing.outboundTotal, item.outboundTotal, existing.meta.sourceRows, fields.outQuantity);
+    existing.owner ||= item.owner;
+    existing.qr ||= item.qr;
+    existing.note ||= item.note;
+  });
+
+  return items;
+}
+
+function mergeSheetNumber(current, next, sourceRows, fieldName) {
+  if (!Number.isFinite(next) || next === 0) return current;
+  const values = sourceRows.map((row) => numberValue((row.fields || {})[fieldName]));
+  // Repeated totals are usually copied down the sheet; keep one value.
+  if (values.length > 1 && values.every((value) => value === values[0])) return values[0];
+  return current + next;
 }
 
 function normalizeMovement(row, fields) {
@@ -492,28 +577,51 @@ async function listSheetRows(env, source) {
     return {
       record_id: String(index + 2),
       fields,
-      meta: { rowNumber: index + 2, headers }
+      meta: { rowNumber: index + 2, headers, sourceToken: source.token, sheetId: source.sheetId }
     };
   });
 }
 
 async function updateSheetRow(env, source, item, fields) {
   const headers = item.meta?.headers || [];
-  const rowNumber = item.meta?.rowNumber;
+  const rowNumbers = item.meta?.rowNumbers || [item.meta?.rowNumber];
+  const rowNumber = rowNumbers.find(Boolean);
   if (!rowNumber) throw new Error("sheet row number not found");
 
   for (const [fieldName, value] of Object.entries(fields)) {
     const columnIndex = headers.indexOf(fieldName);
     if (columnIndex < 0) throw new Error(`sheet field not found: ${fieldName}`);
     const columnName = columnLetters(columnIndex + 1);
-    await feishu(env, `/open-apis/sheets/v2/spreadsheets/${source.token}/values`, {
+    // Keep aggregate edits on the group’s first row. Per-SN child rows stay
+    // intact so the new status-based layout is never flattened by profile edit.
+    const targetRows = [rowNumber];
+    for (const [index, targetRow] of targetRows.entries()) {
+      await feishu(env, `/open-apis/sheets/v2/spreadsheets/${source.token}/values`, {
+        method: "PUT",
+        body: JSON.stringify({
+          valueRange: {
+            range: `${source.sheetId}!${columnName}${targetRow}:${columnName}${targetRow}`,
+            values: [[value]]
+          }
+        })
+      });
+    }
+  }
+}
+
+async function updateSheetSnStatus(env, item, snLines, status, fields) {
+  const headers = item.meta?.headers || [];
+  const columnIndex = headers.indexOf(fields.inStock);
+  if (columnIndex < 0) throw new Error(`sheet field not found: ${fields.inStock}`);
+  const columnName = columnLetters(columnIndex + 1);
+  const wanted = new Set(snLines.map(normalizeSnLine));
+  const rows = item.meta?.sourceRows || [];
+  for (const row of rows) {
+    const rowSn = splitSnLines(textValue((row.fields || {})[fields.sn]));
+    if (!rowSn.some((sn) => wanted.has(normalizeSnLine(sn)))) continue;
+    await feishu(env, `/open-apis/sheets/v2/spreadsheets/${item.meta.sourceToken}/values`, {
       method: "PUT",
-      body: JSON.stringify({
-        valueRange: {
-          range: `${source.sheetId}!${columnName}${rowNumber}:${columnName}${rowNumber}`,
-          values: [[value]]
-        }
-      })
+      body: JSON.stringify({ valueRange: { range: `${item.meta.sheetId}!${columnName}${row.meta.rowNumber}:${columnName}${row.meta.rowNumber}`, values: [[status]] } })
     });
   }
 }
@@ -615,6 +723,7 @@ function fieldNames(env) {
     name: env.FIELD_NAME || "货品",
     stock: env.FIELD_STOCK || "现有库存数量",
     sn: env.FIELD_SN || "SN码",
+    inStock: env.FIELD_IN_STOCK || "是否被使用",
     inQuantity: env.FIELD_IN_QTY || "入库数量",
     outQuantity: env.FIELD_OUT_QTY || "出库数量",
     owner: env.FIELD_OWNER || "负责人",

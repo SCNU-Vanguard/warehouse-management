@@ -190,6 +190,7 @@ function renderItems() {
       node.querySelector(".itemName").textContent = item.name;
       node.querySelector(".itemCode").textContent = item.code || "未设置货物编号";
       node.querySelector(".itemQty").textContent = `${Number(item.stock || 0)}/${Number(item.inboundTotal || 0)}`;
+      node.querySelector(".itemSnCount").textContent = splitLines(item.sn).length ? `${splitLines(item.sn).length} 个 SN` : "无 SN";
       node.addEventListener("click", () => selectItem(item));
       els.itemList.appendChild(node);
     });
@@ -218,8 +219,9 @@ function animateDetailChange() {
 }
 
 function renderSnList(item) {
-  const snLines = splitLines(item.sn);
-  els.detailSnCount.textContent = `${snLines.length} 条`;
+  const allSnLines = splitLines(item.sn);
+  const snLines = Array.isArray(item.availableSn) ? item.availableSn : allSnLines;
+  els.detailSnCount.textContent = `${snLines.length}/${allSnLines.length} 个在库`;
   els.detailSn.replaceChildren();
   if (snLines.length === 0) {
     els.detailSn.textContent = "-";
@@ -356,7 +358,7 @@ function isSelectedItem(item) {
 }
 
 function splitLines(value) {
-  return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return String(value || "").split(/[\r\n,，;；]+/).map((line) => line.trim()).filter(Boolean);
 }
 
 function normalizeSnLine(value) {
@@ -417,7 +419,7 @@ async function submitMovement(event) {
     setFormStatus("出库原因和具体信息必须填写", true);
     return;
   }
-  const itemSnLines = splitLines(item.sn);
+  const itemSnLines = Array.isArray(item.availableSn) ? item.availableSn : splitLines(item.sn);
   if (type === "outbound" && itemSnLines.length > 0 && snLines.length !== quantity) {
     setFormStatus(`该物资有SN码，请填写 ${quantity} 个本次出库SN`, true);
     return;
